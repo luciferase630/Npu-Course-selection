@@ -80,13 +80,21 @@ formula_information:
   enabled: false
   informed_student_ratio: 0.3
   status: analyze_as_information_signal_not_optimal_bid
+  formula_multiplier_name: rho
+  formula_multiplier_rho_range:
+    min: 0.75
+    max: 1.3
+  alpha_offset_definition: alpha = rho - 1
+  alpha_offset_range:
+    min: -0.25
+    max: 0.3
   raw_signal_can_be_float: true
   final_bid_must_be_integer: true
   rounding_rule: nearest_integer_then_clip_to_available_budget
   experiment_groups:
-    - no_formula_baseline
-    - formula_30pct_raw
-    - formula_30pct_utility_filtered
+    - E0_llm_natural_baseline
+    - E4_formula_30pct_unknown_coverage
+    - E5_formula_20pct_unknown_coverage
     - formula_misinformation_stress
 
 outputs:

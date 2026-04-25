@@ -34,6 +34,7 @@
 │  ├─ simple_model.yaml
 │  └─ realistic_three_rounds.yaml
 ├─ prompts/
+│  ├─ single_round_all_pay_system_prompt.md
 │  ├─ student_decision_prompt.md
 │  └─ strategy_explanation_prompt.md
 ├─ src/

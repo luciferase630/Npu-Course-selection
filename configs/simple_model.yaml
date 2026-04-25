@@ -2,6 +2,17 @@
 model_name: simple_single_round_all_pay
 random_seed: 20260425
 
+repeated_experiments:
+  n_repetitions: 50
+  seed_policy: base_seed_plus_repetition_index
+  utility_resample_per_repetition: true
+  capacity_jitter_per_repetition: true
+  capacity_jitter:
+    type: bounded_integer_delta
+    min_delta: -5
+    max_delta: 5
+    min_capacity: 1
+
 objective:
   type: expected_utility_maximization
   utility_source: data/synthetic/student_course_utility_edges.csv
@@ -43,11 +54,105 @@ auction:
   allow_zero_bid_application: true
   bid_domain: nonnegative_integers
 
+agent_design:
+  default_agent_type: llm_natural
+  no_strategy_prompt_means: rules_prompt_only
+  system_prompt: prompts/single_round_all_pay_system_prompt.md
+  formula_prompt_mode: formula_as_uncertain_signal
+  strategy_prompt_mode: explicit_extra_instruction
+  llm_agent_types:
+    - llm_natural
+    - llm_formula_informed
+    - llm_strategy_prompted
+  non_llm_agent_types:
+    - scripted_policy
+
+formula_parameters:
+  formula_multiplier_name: rho
+  formula_multiplier_rho_range:
+    min: 0.75
+    max: 1.3
+  alpha_offset_definition: alpha = rho - 1
+  alpha_offset_range:
+    min: -0.25
+    max: 0.3
+  prefer_formula_multiplier_rho_in_outputs: true
+
+experiment_groups:
+  - name: E0_llm_natural_baseline
+    llm_natural_share: 1.0
+    formula_share: 0.0
+    scripted_policy_share: 0.0
+    strategy_prompted_count: 0
+    visible_formula_share: none
+  - name: E1_one_scripted_policy_agent
+    llm_natural_share: remainder
+    formula_share: 0.0
+    scripted_policy_count: 1
+    strategy_prompted_count: 0
+    visible_formula_share: none
+  - name: E2_10pct_scripted_policy_agents
+    llm_natural_share: 0.9
+    formula_share: 0.0
+    scripted_policy_share: 0.1
+    strategy_prompted_count: 0
+    visible_formula_share: none
+  - name: E3_one_strategy_prompt_llm_agent
+    llm_natural_share: remainder
+    formula_share: 0.0
+    scripted_policy_share: 0.0
+    strategy_prompted_count: 1
+    visible_formula_share: none
+  - name: E4_formula_30pct_unknown_coverage
+    llm_natural_share: 0.7
+    formula_share: 0.3
+    scripted_policy_share: 0.0
+    strategy_prompted_count: 0
+    true_formula_share: 0.3
+    visible_formula_share: unknown
+  - name: E5_formula_20pct_unknown_coverage
+    llm_natural_share: 0.8
+    formula_share: 0.2
+    scripted_policy_share: 0.0
+    strategy_prompted_count: 0
+    true_formula_share: 0.2
+    visible_formula_share: unknown
+
+scripted_policies:
+  enabled_for_controls_only: true
+  policies:
+    - equal_split
+    - utility_weighted
+    - required_penalty_first
+    - teacher_preference
+    - conservative_capacity
+    - aggressive_top_utility
+    - near_capacity_zero_bid
+    - last_minute_snipe
+
+behavior_tags:
+  derive_after_decision: true
+  tags:
+    - early_probe
+    - crowding_retreat
+    - near_capacity_zero_bid
+    - last_minute_snipe
+    - defensive_raise
+    - utility_weighted_like
+    - overbid_low_utility
+
 constraints:
   enforce_course_code_unique: false
   enforce_time_conflict: false
   enforce_total_credit_cap: false
   enforce_category_credit_cap: false
+  schedule_feasibility:
+    enabled_in_first_stage: false
+    time_conflict_is_hard_constraint_when_enabled: true
+    record_violations_when_disabled: true
+    violation_metrics:
+      - time_conflict_violation_count
+      - infeasible_schedule_count
 
 outputs:
   run_root: outputs/runs

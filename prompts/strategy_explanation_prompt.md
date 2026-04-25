@@ -13,6 +13,9 @@
 - 学生-课程班先验主观价值边：`{{utility_edges}}`
 - 未完成必修惩罚：`{{missing_required_penalties}}`
 - 公式信息状态：`{{formula_information_state}}`
+- 学生代理类型：`{{agent_type}}`
+- 脚本策略名称：`{{script_policy_name}}`
+- 显式策略提示词名称：`{{strategy_prompt_name}}`
 - 约束条件：`{{constraints}}`
 
 ## 输出要求
@@ -29,3 +32,5 @@
 8. 如果下一次重新决策，策略可以如何调整。
 
 不要编造输入中不存在的课程、老师、规则、公式信号或历史信息。
+
+如果学生是普通大模型学生，应把这些策略描述为事后观察到的行为标签，而不是假设他一开始就被指定使用某个策略。只有 `agent_type=scripted_policy` 或 `agent_type=llm_strategy_prompted` 时，才把策略视为预先指定。
