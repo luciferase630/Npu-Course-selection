@@ -1,0 +1,59 @@
+# 单轮简化模型配置草案
+model_name: simple_single_round_all_pay
+random_seed: 20260425
+
+objective:
+  type: expected_utility_maximization
+  utility_source: data/synthetic/student_course_utility_edges.csv
+  primary_utility_field: total_utility
+  include_missing_required_penalty: true
+  include_bean_cost: true
+  include_risk_penalty: false
+
+information:
+  show_capacity: true
+  show_observed_waitlist_count: true
+  hide_other_students_bids: true
+  observed_waitlist_field: observed_waitlist_count
+
+intra_round_dynamics:
+  enabled: true
+  time_points_per_round: 5
+  final_time_point_is_deadline: true
+  allow_bid_revision: true
+  allocation_uses_final_bids_only: true
+  allowed_action_types:
+    - keep
+    - increase
+    - decrease
+    - withdraw
+    - new_bid
+
+budget:
+  initial_beans: 100
+  bean_type: integer
+  integer_bids_only: true
+  reject_fractional_bids: true
+  refund_losing_bids: false
+
+auction:
+  rounds: 1
+  allocation_rule: highest_bids_win
+  tie_breaking: seeded_random_among_boundary_ties
+  allow_zero_bid_application: true
+  bid_domain: nonnegative_integers
+
+constraints:
+  enforce_course_code_unique: false
+  enforce_time_conflict: false
+  enforce_total_credit_cap: false
+  enforce_category_credit_cap: false
+
+outputs:
+  run_root: outputs/runs
+  save_bid_events: true
+  save_decisions: true
+  save_allocations: true
+  save_budgets: true
+  save_utilities: true
+  save_metrics: true

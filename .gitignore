@@ -1,0 +1,42 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Generated experiment outputs
+outputs/runs/*
+!outputs/runs/README.md
+outputs/tables/*
+!outputs/tables/README.md
+outputs/figures/*
+!outputs/figures/README.md
+outputs/llm_traces/*
+!outputs/llm_traces/README.md
+
+# Generated processed data can be reproduced from raw/synthetic inputs
+data/processed/*
+!data/processed/README.md
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+

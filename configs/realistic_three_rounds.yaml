@@ -1,0 +1,100 @@
+# 三轮现实模型配置草案
+model_name: realistic_three_rounds_refund_losing_bids
+random_seed: 20260425
+
+objective:
+  type: dynamic_expected_utility_maximization
+  utility_source: data/synthetic/student_course_utility_edges.csv
+  primary_utility_field: total_utility
+  include_missing_required_penalty: true
+  include_bean_cost: true
+  include_risk_penalty: true
+  course_section_id: course_id
+  course_identity_id: course_code
+
+information:
+  show_capacity: true
+  show_remaining_capacity: true
+  show_observed_waitlist_count: true
+  hide_other_students_bids: true
+  observed_waitlist_field: observed_waitlist_count
+
+intra_round_dynamics:
+  enabled: true
+  time_points_per_round: 5
+  final_time_point_is_deadline: true
+  allow_bid_revision: true
+  allocation_uses_final_bids_only: true
+  allowed_action_types:
+    - keep
+    - increase
+    - decrease
+    - withdraw
+    - new_bid
+
+budget:
+  initial_beans: 100
+  bean_type: integer
+  integer_bids_only: true
+  reject_fractional_bids: true
+  refund_losing_bids_each_round: true
+  charge_winning_bids_each_round: true
+
+auction:
+  rounds: 3
+  allocation_rule: highest_bids_win
+  tie_breaking: seeded_random_among_boundary_ties
+  allow_zero_bid_application: true
+  bid_domain: nonnegative_integers
+
+course_release:
+  parameterized: true
+  default_round_1:
+    required_courses: 1.0
+    elective_courses: 0.6
+  default_round_2:
+    include_unfilled_previous_courses: true
+    include_remaining_elective_courses: true
+  default_round_3:
+    include_courses_with_remaining_capacity: true
+
+constraints:
+  enforce_course_code_unique: true
+  enforce_time_conflict: true
+  enforce_total_credit_cap: true
+  total_credit_cap_default: 30
+  enforce_category_credit_cap: true
+  category_credit_caps:
+    freshman_first_semester:
+      English: 2
+    later_semesters:
+      English: 3
+
+llm_agents:
+  enabled: false
+  trace_prompts: true
+  validate_outputs: true
+  repair_invalid_outputs: true
+
+formula_information:
+  enabled: false
+  informed_student_ratio: 0.3
+  status: analyze_as_information_signal_not_optimal_bid
+  raw_signal_can_be_float: true
+  final_bid_must_be_integer: true
+  rounding_rule: nearest_integer_then_clip_to_available_budget
+  experiment_groups:
+    - no_formula_baseline
+    - formula_30pct_raw
+    - formula_30pct_utility_filtered
+    - formula_misinformation_stress
+
+outputs:
+  run_root: outputs/runs
+  save_bid_events: true
+  save_decisions: true
+  save_allocations: true
+  save_budgets: true
+  save_utilities: true
+  save_metrics: true
+  save_llm_traces: true
