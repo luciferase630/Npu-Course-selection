@@ -48,17 +48,17 @@
 | `eligible` | 学生是否可选该课程班 | `true` |
 | `required_code_flag` | 该课程代码是否属于学生必修/强需求 | `true` |
 | `interest_utility` | 内容兴趣效用 | `12` |
-| `teacher_utility` | 老师偏好效用 | `8` |
+| `teacher_utility` | 老师印象、口碑和给分传闻带来的主观价值 | `8` |
 | `time_utility` | 时间偏好效用 | `-2` |
 | `category_utility` | 课程类别效用 | `5` |
 | `credit_utility` | 学分带来的效用 | `4` |
 | `required_completion_bonus` | 完成必修或培养要求的收益 | `30` |
 | `missing_required_penalty` | 若该课程代码最终未完成的惩罚 | `80` |
-| `total_utility` | 对该课程班的综合效用 | `57` |
+| `total_utility` | 对该课程班的先验主观价值，不扣豆子成本 | `57` |
 | `priority` | 优先级，数值越小越优先 | `1` |
 | `must_take_flag` | 是否应尽量确保选中 | `true` |
 
-`total_utility` 可由各分项生成，也可在第一阶段直接人工指定。若两者同时存在，实验代码应优先使用 `total_utility`，并保留分项用于解释。
+`total_utility` 可由各分项生成，也可在第一阶段直接人工指定。它表示学生在选课开始前已经形成的主观价值判断，可能来自老师口碑、课程兴趣、给分传闻、时间偏好和朋友推荐。若分项和总分同时存在，实验代码应优先使用 `total_utility`，并保留分项用于解释。`missing_required_penalty` 不应加进 `total_utility`，它属于最终课表效用中的惩罚项。
 
 ## student_teacher_preferences.csv
 
