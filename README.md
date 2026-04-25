@@ -23,9 +23,7 @@
 │  ├─ 00_problem_definition_simple.md
 │  ├─ 01_problem_definition_realistic.md
 │  ├─ 02_experiment_plan.md
-│  ├─ 03_formula_note_deferred.md
-│  ├─ 04_utility_function_model.md
-│  ├─ 04_formula_analysis_and_information_effect.md
+│  ├─ 04_utility_and_formula_analysis.md
 │  └─ 05_intra_round_dynamic_bidding.md
 ├─ data/
 │  ├─ raw/
@@ -75,7 +73,7 @@
 
 1. 审阅 `docs/00_problem_definition_simple.md`，先确认单轮机制定义是否符合你对“all-pay”的理解。
 2. 审阅 `docs/01_problem_definition_realistic.md`，重点检查三轮规则、退豆规则、学分和时间约束是否贴近学校实际。
-3. 审阅 `docs/04_utility_function_model.md`，确认效用函数是否能表达必修、老师偏好、兴趣和课程班差异。
+3. 审阅 `docs/04_utility_and_formula_analysis.md`，先确认效用函数是否能表达必修、老师偏好、兴趣和课程班差异，再看公式分析是否符合“公式只能作为竞争信号”的定位。
 4. 审阅 `docs/05_intra_round_dynamic_bidding.md`，确认轮内多时间点改投豆策略是否贴近真实选课行为。
 5. 根据 `data/schemas/dataset_schema.md` 搭一个最小合成数据集，重点是 `student_course_utility_edges.csv` 和 `bid_events.csv`。
 6. 再开始写 Python 仿真和大模型调用代码。
