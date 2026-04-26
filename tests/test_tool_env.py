@@ -64,10 +64,17 @@ class ToolEnvTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertNotIn("repair" + "_suggestions", result)
         self.assertIn("conflict_summary", result)
+        self.assertIn("must_fix", result)
+        self.assertEqual(result["must_fix"], result["conflict_summary"]["must_fix"])
+        self.assertEqual(result["must_fix"][0]["type"], "time_slot_conflict")
         self.assertEqual(result["conflict_summary"]["budget_status"]["budget_excess"], 20)
         self.assertEqual(result["conflict_summary"]["budget_status"]["minimum_bid_reduction_required"], 20)
-        self.assertEqual(len(result["conflict_summary"]["time_conflict_groups"]), 1)
+        self.assertNotIn("time_conflict_groups", result["conflict_summary"])
         self.assertEqual(result["conflict_summary"]["time_conflict_groups_by_slot"][0]["time_slot"], "Mon-1-2")
+        self.assertEqual(
+            result["conflict_summary"]["submitted_courses"][0],
+            {"course_id": "A-1", "course_code": "A", "bid": 60, "time_slot": "Mon-1-2", "credit": 3.0},
+        )
         self.assertFalse(session.state[("S001", "A-1")].selected)
         self.assertEqual(session.draft_bids, {})
 
@@ -96,14 +103,15 @@ class ToolEnvTests(unittest.TestCase):
             {"status": "rejected", "violations": [{"type": "over_budget"}]},
             rounds_remaining=6,
         )
-        self.assertIn("Review conflict_summary", instruction)
-        self.assertIn("You decide", instruction)
+        self.assertIn("Do NOT call submit_bids again", instruction)
+        self.assertIn("check_schedule", instruction)
 
     def test_protocol_instruction_pushes_near_limit_to_submit(self) -> None:
         session = make_session()
         instruction = session.build_protocol_instruction("search_courses", {"status": "ok"}, rounds_remaining=2)
-        self.assertIn("near the round limit", instruction)
-        self.assertIn("Call submit_bids next", instruction)
+        self.assertIn("limited rounds left", instruction)
+        self.assertIn("check_schedule", instruction)
+        self.assertIn("do not add replacement courses", instruction)
 
     def test_protocol_instruction_keeps_decision_with_llm(self) -> None:
         session = make_session()
@@ -113,6 +121,8 @@ class ToolEnvTests(unittest.TestCase):
             rounds_remaining=1,
         )
         self.assertIn("You decide", instruction)
+        self.assertIn("smaller proposal", instruction)
+        self.assertIn("must_fix", instruction)
         self.assertNotIn("suggested" + "_feasible_bids", instruction)
         self.assertNotIn("exactly", instruction)
 
@@ -129,12 +139,61 @@ class ToolEnvTests(unittest.TestCase):
             },
         )
         summary = result["conflict_summary"]
+        self.assertEqual(summary["must_fix"][0]["type"], "duplicate_course_code")
         self.assertEqual(summary["duplicate_course_ids"], ["A-1"])
         self.assertEqual(summary["duplicate_course_code_groups"][0]["course_code"], "A")
         self.assertEqual(summary["duplicate_course_code_groups"][0]["rule"], "keep at most one")
         self.assertIn("hard_rules_to_satisfy", summary)
+        self.assertEqual(summary["conflict_impact"][0]["course_id"], "A-1")
+        self.assertEqual(summary["conflict_impact"][0]["involved_in_n_conflicts"], 2)
+        self.assertEqual(
+            summary["conflict_impact"][0]["conflict_type_counts"],
+            {"duplicate_course_code": 1, "duplicate_course_id": 1},
+        )
         self.assertNotIn("utility", str(summary))
         self.assertNotIn("derived_missing_required_penalty", str(summary))
+        self.assertNotIn("capacity", str(summary))
+        self.assertNotIn("observed_waitlist_count", str(summary))
+
+    def test_rejected_submit_requires_check_before_resubmit(self) -> None:
+        session = make_session()
+        rejected = session.call_tool(
+            "submit_bids",
+            {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "B-1", "bid": 60}]},
+        )
+        self.assertEqual(rejected["status"], "rejected")
+        blocked = session.call_tool("submit_bids", {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "C-1", "bid": 40}]})
+        self.assertEqual(blocked["status"], "error")
+        self.assertEqual(blocked["error_type"], "protocol_error")
+        checked = session.call_tool("check_schedule", {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "C-1", "bid": 40}]})
+        self.assertTrue(checked["feasible"])
+        accepted = session.call_tool("submit_bids", {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "C-1", "bid": 40}]})
+        self.assertEqual(accepted["status"], "accepted")
+
+    def test_check_schedule_accepts_course_ids_alias(self) -> None:
+        session = make_session()
+        result = session.call_tool("check_schedule", {"course_ids": ["A-1", "B-1"]})
+        self.assertFalse(result["feasible"])
+        self.assertFalse(result["proposal_includes_explicit_bids"])
+        self.assertEqual(result["budget_validation"], "course_ids_only_does_not_validate_future_bid_amounts")
+        self.assertEqual(result["summary"]["selected_count"], 2)
+        self.assertEqual(result["conflict_summary"]["time_conflict_groups_by_slot"][0]["time_slot"], "Mon-1-2")
+
+    def test_feasible_course_ids_check_requires_explicit_bid_check_before_submit(self) -> None:
+        session = make_session()
+        result = session.call_tool("check_schedule", {"course_ids": ["A-1", "C-1"]})
+        self.assertTrue(result["feasible"])
+        self.assertFalse(result["proposal_includes_explicit_bids"])
+        instruction = session.build_protocol_instruction("check_schedule", result, rounds_remaining=3)
+        self.assertIn("budget was not validated", instruction)
+        self.assertIn("explicit bids", instruction)
+
+    def test_submit_requires_explicit_bids(self) -> None:
+        session = make_session()
+        result = session.call_tool("submit_bids", {"course_ids": ["A-1", "C-1"]})
+        self.assertEqual(result["status"], "rejected")
+        self.assertIn("invalid_bid_items", result["conflict_summary"])
+        self.assertEqual(result["must_fix"][0]["type"], "invalid_bid_items")
 
 
 if __name__ == "__main__":

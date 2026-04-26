@@ -119,14 +119,16 @@ class OpenAICompatibleClient:
                 tool_result = session.call_tool(tool_name, arguments)
             if tool_name == "submit_bids" and tool_result.get("status") == "rejected":
                 submit_rejected_count += 1
-            trace.append(
-                {
-                    "round_index": round_index,
-                    "tool_request": tool_request,
-                    "tool_result": tool_result,
-                }
-            )
             if tool_name == "submit_bids" and tool_result.get("status") == "accepted":
+                trace.append(
+                    {
+                        "round_index": round_index,
+                        "tool_request": tool_request,
+                        "tool_result": tool_result,
+                        "rounds_remaining": max_rounds - round_index,
+                        "protocol_instruction": None,
+                    }
+                )
                 return {
                     "accepted": True,
                     "normalized_decision": tool_result["normalized_decision"],
@@ -140,6 +142,15 @@ class OpenAICompatibleClient:
                 }
             rounds_remaining = max_rounds - round_index
             protocol_instruction = session.build_protocol_instruction(tool_name, tool_result, rounds_remaining)
+            trace.append(
+                {
+                    "round_index": round_index,
+                    "tool_request": tool_request,
+                    "tool_result": tool_result,
+                    "rounds_remaining": rounds_remaining,
+                    "protocol_instruction": protocol_instruction,
+                }
+            )
             messages.append({"role": "assistant", "content": json.dumps(tool_request, ensure_ascii=False)})
             messages.append(
                 {

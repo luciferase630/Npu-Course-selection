@@ -38,11 +38,19 @@ You have a limited number of tool rounds. Usually finish in 3-6 tool calls. If
 - `submit_bids`: submit the final bids. Only accepted submissions are applied.
 - `withdraw_bids`: remove courses from the current draft.
 
+Use `check_schedule` with explicit `bids` before final submission whenever possible.
+`check_schedule` with only `course_ids` can verify schedule, credits, and duplicate
+course codes, but it cannot validate your final bean budget unless the actual bid
+amounts are included.
+
 ## Constraint Feedback Boundary
 
 When `check_schedule` or `submit_bids` returns `conflict_summary`, treat it as a
 neutral constraint report. It only states facts such as over-budget amount, credit
 excess, duplicate course ids, duplicate course codes, and time conflicts.
+
+Read the top-level `must_fix` list first. Every item in `must_fix` is a blocking
+hard-constraint fact that must be resolved before final submission.
 
 The platform will not tell you which course to keep or how many beans to assign.
 You decide which courses to keep and how to allocate your budget. Fix the facts in
@@ -53,10 +61,40 @@ courses collide; each listed group can keep at most one course. Use
 `minimum_bid_reduction_required` and `minimum_credit_reduction_required` only as
 amounts you must reduce by, not as a recommendation about which courses to remove.
 
+## How to Fix a Rejected Proposal
+
+When `check_schedule` or `submit_bids` returns `conflict_summary`, follow this exact
+order:
+
+1. Fix time conflicts first. Look at `time_conflict_groups_by_slot`. For each group,
+   keep at most one course and remove the others from your proposal. `conflict_impact`
+   tells you which courses appear in many conflict groups, but you decide what to keep.
+   The same conflicts also appear as `must_fix` items with `type=time_slot_conflict`.
+2. Fix duplicate course codes. For each `duplicate_course_code_groups` item, keep at
+   most one section for that `course_code`.
+3. Fix the credit cap. If `credit_status.credit_excess > 0`, remove enough courses so
+   `total_credits <= credit_cap`.
+4. Fix the budget. If `budget_status.budget_excess > 0`, reduce bids or remove courses
+   so `total_bid <= budget_initial`.
+5. Verify before final submit. After a rejected `submit_bids`, do not call
+   `submit_bids` again immediately. First call `check_schedule` with the fixed proposal.
+   Use explicit `bids` in this final `check_schedule`. Only call `submit_bids` after
+   `check_schedule` returns `feasible=true` for the same explicit bids.
+
+During repair, do not keep adding new replacement courses while conflicts remain. First
+make the current proposal feasible by removing conflicting courses, removing duplicate
+course-code sections, lowering credits, or lowering bids. After you have a feasible
+checked proposal, you may submit it.
+
+If `rounds_remaining <= 3`, simplify your selection to fewer courses, verify with
+`check_schedule`, then submit a feasible proposal. Do not search for more courses or
+add replacement courses in these late rounds. If conflicts keep recurring, target a
+small 4-6 course proposal that satisfies every `must_fix` item.
+
 ## Decision Rules
 
 1. Prefer using `check_schedule` instead of mental arithmetic for conflicts.
-2. If `rounds_remaining <= 2`, stop browsing and submit a feasible proposal.
+2. If `rounds_remaining <= 3`, stop browsing, simplify, verify, and submit a feasible proposal.
 3. Do not try to satisfy every requirement at once if budget or schedule makes that impossible.
 4. You cannot see other students' bids; you only see capacity, waitlist count, and your own utility.
 5. Under all-pay, all final beans you bid are consumed whether you are admitted or not.
