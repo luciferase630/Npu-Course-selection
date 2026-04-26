@@ -4,6 +4,32 @@
 
 核心数据口径：学生目标是最大化效用，因此主偏好数据不是“课程列表”，而是学生-课程班效用边表。
 
+## profiles.csv
+
+培养方案定义表，用于生成学生级课程代码要求。
+
+| 字段 | 含义 | 示例 |
+|---|---|---|
+| `profile_id` | 培养方案唯一标识 | `CS_2026` |
+| `profile_name` | 培养方案名称 | `Computer Science` |
+| `college` | 所属学院 | `ComputerScience` |
+
+`profile_id` 必须唯一。`profiles.csv` 是生成阶段和 review 阶段使用的表，不直接参与实验 runtime allocation。
+
+## profile_requirements.csv
+
+培养方案到课程代码的映射表。
+
+| 字段 | 含义 | 示例 |
+|---|---|---|
+| `profile_id` | 培养方案唯一标识 | `CS_2026` |
+| `course_code` | 课程代码 | `MATH101` |
+| `requirement_type` | 要求类型 | `required` / `strong_elective_requirement` / `optional_target` |
+| `requirement_priority` | 要求强度 | `degree_blocking` / `progress_blocking` / `normal` / `low` |
+| `deadline_term` | 最晚建议完成学期 | `current` |
+
+`student_course_code_requirements.csv` 应由 `students.csv.profile_id` 和 `profile_requirements.csv` 自动展开生成。不同 profile 应共享部分基础课，同时保留各自专业核心课差异。
+
 ## students.csv
 
 | 字段 | 含义 | 示例 |
@@ -15,7 +41,7 @@
 | `credit_cap` | 学期总学分上限 | `30` |
 | `bean_cost_lambda` | 基准豆子影子价格，需与 `utility` 同标尺 | `1` |
 | `grade_stage` | 年级/阶段，用于派生状态依赖影子价格 | `freshman` / `senior` / `graduation_term` |
-| `required_profile` | 培养方案标识 | `CS_2026` |
+| `profile_id` | 培养方案标识，引用 `profiles.csv` | `CS_2026` |
 | `risk_type` | 风险类型 | `conservative` / `balanced` / `aggressive` |
 | `formula_informed_flag` | 是否属于知道公式的信息组 | `true` / `false` |
 | `agent_type` | 学生代理类型 | `llm_natural` / `llm_formula_informed` / `llm_strategy_prompted` / `scripted_policy` |
@@ -26,7 +52,7 @@
 
 `bean_cost_lambda` 不是最终完整的 $\lambda_i(\mathbf{s}_i)$，而是基准豆子影子价格。实验运行时应根据 `grade_stage`、`risk_type`、未完成课程代码要求压力和剩余预算派生 `state_dependent_bean_cost_lambda`。若 MVP 设基准值为1，必须同时约定 `utility` 已经被归一化到“1个豆子约等于1个效用单位”的标尺。若 `utility` 使用0到100喜爱分，则需要单独校准。
 
-当前 smoke MVP 代码实际必需字段为：`student_id,budget_initial,risk_type,credit_cap,bean_cost_lambda,grade_stage`。`college`、`grade`、`required_profile`、`formula_informed_flag`、`agent_type` 等字段属于后续扩展，可暂时不出现在合成数据中。
+当前 runtime loader 实际读取字段为：`student_id,budget_initial,risk_type,credit_cap,bean_cost_lambda,grade_stage`。medium 生成器还应输出 `profile_id`，但 runtime 会忽略这个额外列；`college`、`grade`、`formula_informed_flag`、`agent_type` 等字段属于扩展字段。
 
 ## experiment_groups.csv
 
@@ -71,7 +97,7 @@
 
 ## student_course_code_requirements.csv
 
-记录学生个人对课程代码的完成要求。它表达培养方案事实、要求类型和要求强度，不属于学生-课程班效用边表，也不要求逐行手填惩罚值。
+记录学生个人对课程代码的完成要求。它由 `students.csv.profile_id` 和 `profile_requirements.csv` 自动展开得到，表达培养方案事实、要求类型和要求强度，不属于学生-课程班效用边表，也不要求逐行手填惩罚值。
 
 | 字段 | 含义 | 示例 |
 |---|---|---|
@@ -98,14 +124,16 @@
 
 ## student_course_utility_edges.csv
 
-这是主偏好表，也是学生-课程班邻接矩阵的稀疏边表。
+这是主偏好表，也是学生-课程班邻接矩阵的边表。medium v1 默认生成完整边表。
 
 | 字段 | 含义 | 示例 |
 |---|---|---|
 | `student_id` | 学生唯一标识 | `S001` |
 | `course_id` | 课程班唯一标识 | `ENG101-A` |
-| `eligible` | 学生是否可选该课程班 | `true` |
+| `eligible` | 学校系统是否允许该学生申请该教学班 | `true` |
 | `utility` | 学生对该教学班的主观喜爱/吸引力 | `57` |
+
+`eligible` 是硬性申请资格，不是专业匹配程度。medium v1 不建先修课或行政限制表，因此所有学生对所有教学班默认 `eligible=true`，输出完整边表。profile 只影响 `utility` 的专业相关性和 `student_course_code_requirements.csv` 的课程代码要求。
 
 `utility` 是学生在选课开始前已经形成的主观喜爱程度，可能来自老师口碑、课程兴趣、给分传闻、时间偏好和朋友推荐。MVP 不拆解它的来源。课程学分、必修缺失惩罚、课程代码唯一约束、时间冲突和学分上限不写入这张边表，而是由 `courses.csv`、`students.csv`、`student_course_code_requirements.csv` 和可行课表约束处理。
 
@@ -123,7 +151,7 @@
 
 可选展示表，不作为主源数据。
 
-矩阵行是学生，列是课程班，单元格为 $u_{ic}$。它适合报告展示，但不适合作为主数据，因为现实中的可选关系通常是稀疏的。
+矩阵行是学生，列是课程班，单元格为 $u_{ic}$。它适合报告展示；medium v1 的边表等价于完整矩阵的长表形式。
 
 ## 实验输出表
 

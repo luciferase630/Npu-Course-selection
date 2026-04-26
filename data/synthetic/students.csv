@@ -1,7 +1,0 @@
-student_id,budget_initial,risk_type,credit_cap,bean_cost_lambda,grade_stage
-S001,100,balanced,10,1,freshman
-S002,100,conservative,10,1,senior
-S003,100,aggressive,10,1,sophomore
-S004,100,balanced,10,1,junior
-S005,100,conservative,10,1,graduation_term
-S006,100,aggressive,10,1,junior

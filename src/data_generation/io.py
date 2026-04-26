@@ -110,7 +110,11 @@ def load_requirements(path: str | Path) -> list[CourseRequirement]:
 def resolve_data_paths(config: dict) -> dict[str, Path]:
     objective = config.get("objective", {})
     return {
-        "students": Path("data/synthetic/students.csv"),
+        "profiles": Path(objective.get("profile_source", "data/synthetic/profiles.csv")),
+        "profile_requirements": Path(
+            objective.get("profile_requirements_source", "data/synthetic/profile_requirements.csv")
+        ),
+        "students": Path(objective.get("student_source", "data/synthetic/students.csv")),
         "courses": Path(objective.get("course_metadata_source", "data/synthetic/courses.csv")),
         "utility_edges": Path(objective.get("utility_source", "data/synthetic/student_course_utility_edges.csv")),
         "requirements": Path(

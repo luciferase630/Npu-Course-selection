@@ -80,22 +80,22 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-生成小规模合成数据：
+生成 medium 合成数据：
 
 ```powershell
-python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset smoke
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
 ```
 
 运行 mock 大模型冒烟实验：
 
 ```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id smoke_mock --agent mock --experiment-group E0_llm_natural_baseline
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id medium_mock --agent mock --experiment-group E0_llm_natural_baseline
 ```
 
 运行带单个脚本策略学生的对照实验：
 
 ```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id smoke_e1 --agent mock --experiment-group E1_one_scripted_policy_agent --script-policy utility_weighted
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id medium_e1 --agent mock --experiment-group E1_one_scripted_policy_agent --script-policy utility_weighted
 ```
 
 运行重复实验：

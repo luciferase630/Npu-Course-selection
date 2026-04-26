@@ -148,7 +148,7 @@ experiments
 当前已实现两个入口：
 
 ```powershell
-python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset smoke
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
 python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id demo_001 --agent mock --experiment-group E0_llm_natural_baseline
 python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_model.yaml --run-prefix e0_mock --agent mock --experiment-group E0_llm_natural_baseline --n-repetitions 50
 ```

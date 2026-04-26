@@ -113,4 +113,12 @@ Codex 对 shadow price 的核心改动：
 
 ---
 
+**注**：本报告后续追加的 spec 审阅和时间冲突边界 case 已拆分为独立文件：
+- `reports/reviews/review_spec_06_07_dataset_generation.md`
+- `reports/reviews/review_time_slot_overlap_boundary_case.md`
+
 *本报告基于对 `src/` 全量代码的只读审阅，未修改任何文件。*
+
+**注**：本报告后续追加的 spec 审阅和时间冲突边界 case 已拆分为独立文件：
+- `reports/reviews/review_spec_06_07_dataset_generation.md`
+- `reports/reviews/review_time_slot_overlap_boundary_case.md`

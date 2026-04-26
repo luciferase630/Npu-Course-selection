@@ -315,11 +315,14 @@ student_id, course_id, eligible, utility
 
 这张表只回答一个问题：学生 $i$ 有多喜欢教学班 $c$。
 
+medium v1 中，`eligible` 只表示学校系统是否允许申请该教学班。因为第一版不建先修课或行政限制表，所以所有学生对所有教学班默认 `eligible=true`。跨专业差异不通过 eligible 硬过滤，而通过 `utility` 的专业相关性和课程代码要求来表达。
+
 其他模型参数分开存放：
 
 - `courses.csv` 保存 `course_code`、`credit`、`time_slot`、`category`、`capacity` 等课程元数据。
-- `students.csv` 保存 `credit_cap`、`bean_cost_lambda`、`grade_stage` 等学生参数。
-- `student_course_code_requirements.csv` 保存课程代码要求事实，例如 `requirement_type`、`requirement_priority`、`deadline_term`。
+- `profiles.csv` 和 `profile_requirements.csv` 保存培养方案及其课程代码要求。
+- `students.csv` 保存 `profile_id`、`credit_cap`、`bean_cost_lambda`、`grade_stage` 等学生参数。
+- `student_course_code_requirements.csv` 由 `students.csv.profile_id` 和 `profile_requirements.csv` 派生，保存学生级课程代码要求事实，例如 `requirement_type`、`requirement_priority`、`deadline_term`。
 - `requirement_penalty_model` 根据这些事实派生 `derived_missing_required_penalty`，也就是数学里的 $\mu_{ik}$。
 
 其中 `bean_cost_lambda` 是基准影子价格，不是完整的 $\lambda_i(\mathbf{s}_i)$。实验运行时应根据学生状态派生 `state_dependent_bean_cost_lambda`：单轮里，一个豆子投给这门课就不能投给别的课；三轮里，一个豆子本轮中选消耗后就不能留到后续轮次。只有当 `utility` 标尺已经归一化时，MVP 才可以临时取基准 `bean_cost_lambda=1`。
@@ -336,7 +339,7 @@ u_{N1} & u_{N2} & \cdots & u_{NK}
 \end{bmatrix}
 $$
 
-但实验源数据以边表为主，因为现实中不是每个学生都能选每个课程班，稀疏边表更适合表示可选范围和个体偏好。
+但实验源数据以边表为主。medium v1 输出完整边表；后续如果引入先修课或行政限制，仍可以用同一边表结构表达少量 `eligible=false` 或缺失边。
 
 ## 第二部分：神秘公式分析与信息冲击实验
 

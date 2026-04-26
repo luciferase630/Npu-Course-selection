@@ -15,6 +15,9 @@ repeated_experiments:
 
 objective:
   type: expected_utility_maximization
+  profile_source: data/synthetic/profiles.csv
+  profile_requirements_source: data/synthetic/profile_requirements.csv
+  student_source: data/synthetic/students.csv
   utility_source: data/synthetic/student_course_utility_edges.csv
   primary_utility_field: utility
   requirements_source: data/synthetic/student_course_code_requirements.csv
