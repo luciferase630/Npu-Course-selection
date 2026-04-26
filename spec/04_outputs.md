@@ -134,6 +134,8 @@ $$
   "n_students": 30,
   "n_courses": 100,
   "time_points": 5,
+  "average_selected_courses": 0,
+  "average_bid_concentration_hhi": 0,
   "average_net_total_utility": 0,
   "average_beans_paid": 0,
   "average_state_dependent_bean_cost_lambda": 0,
@@ -146,10 +148,15 @@ $$
   "over_budget_count": 0,
   "constraint_violation_rejected_count": 0,
   "tool_call_count": 0,
+  "tool_interaction_count": 0,
+  "average_tool_rounds_per_interaction": 0,
   "tool_submit_rejected_count": 0,
   "tool_round_limit_count": 0,
+  "tool_request_char_count_total": 0,
+  "tool_request_char_count_max": 0,
   "scripted_agent_count": 0,
   "scripted_agent_utility_gap": "",
+  "elapsed_seconds": 0,
   "behavior_tag_counts": {}
 }
 ```

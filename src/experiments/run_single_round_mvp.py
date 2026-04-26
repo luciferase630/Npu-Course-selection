@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import time
 from pathlib import Path
 
 from src.auction_mechanism.allocation import allocate_courses, compute_all_pay_budgets
@@ -421,7 +422,29 @@ def compute_utilities(
     return rows
 
 
+def compute_final_decision_metrics(final_decisions: dict[tuple[str, str], dict], student_ids: list[str]) -> dict:
+    selected_counts = []
+    hhi_values = []
+    for student_id in student_ids:
+        student_decisions = [
+            decision
+            for (sid, _course_id), decision in final_decisions.items()
+            if sid == student_id and decision["selected"]
+        ]
+        selected_counts.append(len(student_decisions))
+        total_bid = sum(int(decision["bid"]) for decision in student_decisions)
+        if total_bid <= 0:
+            hhi_values.append(0.0)
+        else:
+            hhi_values.append(sum((int(decision["bid"]) / total_bid) ** 2 for decision in student_decisions))
+    return {
+        "average_selected_courses": round(sum(selected_counts) / max(1, len(selected_counts)), 4),
+        "average_bid_concentration_hhi": round(sum(hhi_values) / max(1, len(hhi_values)), 4),
+    }
+
+
 def main() -> None:
+    started_at = time.perf_counter()
     parser = argparse.ArgumentParser(description="Run single-round all-pay MVP experiment.")
     parser.add_argument("--config", default="configs/simple_model.yaml")
     parser.add_argument("--run-id", required=True)
@@ -431,6 +454,7 @@ def main() -> None:
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--interaction-mode", choices=["single_shot", "tool_based"], default=None)
+    parser.add_argument("--time-points", type=int, default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -443,7 +467,7 @@ def main() -> None:
     validate_dataset(students, courses, edges, requirements)
 
     seed = int(config.get("random_seed", 20260425)) + args.seed_offset
-    time_points = int(config.get("intra_round_dynamics", {}).get("time_points_per_round", 5))
+    time_points = args.time_points or int(config.get("intra_round_dynamics", {}).get("time_points_per_round", 5))
     output_root = Path(config.get("outputs", {}).get("run_root", "outputs/runs")) / args.run_id
     output_root.mkdir(parents=True, exist_ok=True)
     llm_context_config = config.get("llm_context", {})
@@ -486,8 +510,11 @@ def main() -> None:
     retry_success_count = 0
     fallback_keep_previous_count = 0
     tool_call_count = 0
+    tool_interaction_count = 0
     tool_submit_rejected_count = 0
     tool_round_limit_count = 0
+    tool_request_char_count_total = 0
+    tool_request_char_count_max = 0
 
     for time_point in range(1, time_points + 1):
         order = student_ids[:]
@@ -540,6 +567,7 @@ def main() -> None:
             applied = False
             validation = ValidationResult(False, "no attempt made")
             if interaction_mode == "tool_based" and agent_type != "scripted_policy":
+                tool_interaction_count += 1
                 session = StudentSession(
                     run_id=args.run_id,
                     time_point=time_point,
@@ -582,6 +610,11 @@ def main() -> None:
                     }
                     json_failure_count += 1
                 tool_call_count += int(tool_result.get("tool_call_count", 0))
+                tool_request_char_count_total += int(tool_result.get("request_char_count_total", 0))
+                tool_request_char_count_max = max(
+                    tool_request_char_count_max,
+                    int(tool_result.get("request_char_count_max", 0)),
+                )
                 tool_submit_rejected_count += int(tool_result.get("submit_rejected_count", 0))
                 if tool_result.get("round_limit_reached"):
                     tool_round_limit_count += 1
@@ -878,6 +911,7 @@ def main() -> None:
             sum(scripted_values) / len(scripted_values) - sum(natural_values) / len(natural_values),
             4,
         )
+    final_decision_metrics = compute_final_decision_metrics(final_decisions, student_ids)
     metrics = {
         "run_id": args.run_id,
         "experiment_group": args.experiment_group,
@@ -887,6 +921,7 @@ def main() -> None:
         "time_points": time_points,
         "scripted_agent_count": len(scripted_students),
         "scripted_agent_utility_gap": scripted_gap,
+        **final_decision_metrics,
         "average_net_total_utility": round(
             sum(float(row["net_total_utility"]) for row in utilities) / max(1, len(utilities)), 4
         ),
@@ -911,9 +946,14 @@ def main() -> None:
         "retry_success_count": retry_success_count,
         "fallback_keep_previous_count": fallback_keep_previous_count,
         "tool_call_count": tool_call_count,
+        "tool_interaction_count": tool_interaction_count,
+        "average_tool_rounds_per_interaction": round(tool_call_count / max(1, tool_interaction_count), 4),
         "tool_submit_rejected_count": tool_submit_rejected_count,
         "tool_round_limit_count": tool_round_limit_count,
+        "tool_request_char_count_total": tool_request_char_count_total,
+        "tool_request_char_count_max": tool_request_char_count_max,
         "behavior_tag_counts": count_behavior_tags(bid_events),
+        "elapsed_seconds": round(time.perf_counter() - started_at, 4),
     }
     (output_root / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
     with (output_root / "llm_traces.jsonl").open("w", encoding="utf-8") as f:

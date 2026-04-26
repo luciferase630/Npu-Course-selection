@@ -62,6 +62,11 @@ class ToolEnvTests(unittest.TestCase):
         session = make_session()
         result = session.call_tool("submit_bids", {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "B-1", "bid": 60}]})
         self.assertEqual(result["status"], "rejected")
+        self.assertIn("repair_suggestions", result)
+        self.assertLessEqual(
+            sum(item["bid"] for item in result["repair_suggestions"]["suggested_feasible_bids"]),
+            session.student.budget_initial,
+        )
         self.assertFalse(session.state[("S001", "A-1")].selected)
         self.assertEqual(session.draft_bids, {})
 
@@ -77,6 +82,36 @@ class ToolEnvTests(unittest.TestCase):
         session = make_session()
         result = session.call_tool("get_course_details", {"course_id": "NOPE"})
         self.assertEqual(result["status"], "error")
+
+    def test_protocol_instruction_pushes_feasible_schedule_to_submit(self) -> None:
+        session = make_session()
+        instruction = session.build_protocol_instruction("check_schedule", {"feasible": True}, rounds_remaining=6)
+        self.assertIn("Call submit_bids", instruction)
+
+    def test_protocol_instruction_pushes_rejected_submit_to_repair(self) -> None:
+        session = make_session()
+        instruction = session.build_protocol_instruction(
+            "submit_bids",
+            {"status": "rejected", "violations": [{"type": "over_budget"}]},
+            rounds_remaining=6,
+        )
+        self.assertIn("Fix the returned violations", instruction)
+
+    def test_protocol_instruction_pushes_near_limit_to_submit(self) -> None:
+        session = make_session()
+        instruction = session.build_protocol_instruction("search_courses", {"status": "ok"}, rounds_remaining=2)
+        self.assertIn("near the round limit", instruction)
+        self.assertIn("Call submit_bids next", instruction)
+
+    def test_protocol_instruction_uses_repair_suggestion_when_available(self) -> None:
+        session = make_session()
+        instruction = session.build_protocol_instruction(
+            "check_schedule",
+            {"feasible": False, "repair_suggestions": {"suggested_feasible_bids": [{"course_id": "A-1", "bid": 50}]}},
+            rounds_remaining=1,
+        )
+        self.assertIn("suggested_feasible_bids", instruction)
+        self.assertIn("submit_bids now", instruction)
 
 
 if __name__ == "__main__":

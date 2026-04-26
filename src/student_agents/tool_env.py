@@ -100,6 +100,30 @@ class StudentSession:
         except Exception as exc:  # Tool calls must not crash the experiment loop.
             return {"status": "error", "error": str(exc)}
 
+    def build_protocol_instruction(self, last_tool_name: str, last_tool_result: dict, rounds_remaining: int) -> str:
+        """Return the next-step instruction for the tool protocol.
+
+        This is intentionally owned by the session layer because it depends on
+        course-selection semantics, not on the transport used to call an LLM.
+        """
+        repair = last_tool_result.get("repair_suggestions", {}) if isinstance(last_tool_result, dict) else {}
+        if repair.get("suggested_feasible_bids") and last_tool_name in {"check_schedule", "submit_bids"}:
+            return (
+                "The previous proposal was not feasible. Use "
+                "tool_result.repair_suggestions.suggested_feasible_bids exactly, or an even smaller feasible subset, "
+                "and call submit_bids now."
+            )
+        if last_tool_name == "check_schedule" and last_tool_result.get("feasible"):
+            return "The checked proposal is feasible. Call submit_bids with the same bids now."
+        if last_tool_name == "submit_bids" and last_tool_result.get("status") == "rejected":
+            return "Fix the returned violations and call submit_bids again."
+        if rounds_remaining <= 2:
+            return (
+                "You are near the round limit. Stop browsing. Call submit_bids next using the best feasible "
+                "courses you already know."
+            )
+        return "Continue using tools only if needed; finish with submit_bids."
+
     def get_current_status(self) -> dict:
         selected = [self._course_summary(course_id, bid=bid) for course_id, bid in sorted(self.draft_bids.items())]
         total_bid = sum(self.draft_bids.values())
@@ -356,7 +380,7 @@ class StudentSession:
     def _schedule_result(self, bids: dict[str, int], violations: list[dict]) -> dict:
         total_bid = sum(bids.values())
         total_credits = sum(self.courses[course_id].credit for course_id in bids if course_id in self.courses)
-        return {
+        result = {
             "feasible": not violations,
             "violations": violations,
             "summary": {
@@ -370,6 +394,69 @@ class StudentSession:
                 "credit_remaining": round(self.student.credit_cap - total_credits, 4),
             },
         }
+        if violations:
+            result["repair_suggestions"] = self._build_repair_suggestions(bids)
+        return result
+
+    def _build_repair_suggestions(self, bids: dict[str, int]) -> dict:
+        selected_ids = [course_id for course_id in bids if course_id in self.courses]
+        selected_ids.sort(key=lambda course_id: self._repair_priority(course_id, bids.get(course_id, 0)), reverse=True)
+        kept_ids: list[str] = []
+        removed_ids: list[str] = []
+        used_codes: set[str] = set()
+        used_slots: set[str] = set()
+        total_credits = 0.0
+        for course_id in selected_ids:
+            course = self.courses[course_id]
+            slots = split_time_slots(course.time_slot)
+            if course.course_code in used_codes:
+                removed_ids.append(course_id)
+                continue
+            if used_slots & slots:
+                removed_ids.append(course_id)
+                continue
+            if total_credits + course.credit > self.student.credit_cap:
+                removed_ids.append(course_id)
+                continue
+            kept_ids.append(course_id)
+            used_codes.add(course.course_code)
+            used_slots.update(slots)
+            total_credits += course.credit
+        suggested_bids = self._budget_fit_bids(kept_ids, bids)
+        return {
+            "suggested_feasible_bids": suggested_bids,
+            "removed_course_ids": sorted(removed_ids),
+            "instruction": (
+                "These bids are a platform-generated feasible repair for the listed violations. "
+                "You may submit them directly or submit a smaller feasible subset."
+            ),
+        }
+
+    def _budget_fit_bids(self, course_ids: list[str], original_bids: dict[str, int]) -> list[dict]:
+        budget = self.student.budget_initial
+        bids = {course_id: max(0, int(original_bids.get(course_id, 0))) for course_id in course_ids}
+        total_bid = sum(bids.values())
+        if total_bid <= budget:
+            return [{"course_id": course_id, "bid": bids[course_id]} for course_id in course_ids]
+        weights = [max(1.0, self._repair_priority(course_id, bids.get(course_id, 0))) for course_id in course_ids]
+        total_weight = sum(weights)
+        fitted = []
+        spent = 0
+        for index, (course_id, weight) in enumerate(zip(course_ids, weights)):
+            if index == len(course_ids) - 1:
+                bid = budget - spent
+            else:
+                bid = int(budget * weight / total_weight)
+                bid = min(bid, budget - spent)
+            spent += bid
+            fitted.append({"course_id": course_id, "bid": max(0, bid)})
+        return fitted
+
+    def _repair_priority(self, course_id: str, bid: int) -> float:
+        course = self.courses[course_id]
+        edge = self.edges[(self.student.student_id, course_id)]
+        requirement_pressure = self.derived_penalties.get((self.student.student_id, course.course_code), 0.0)
+        return float(edge.utility) + 0.15 * requirement_pressure + 0.05 * max(0, bid)
 
     @staticmethod
     def _action_type(selected: bool, bid: int, previous_selected: bool, previous_bid: int) -> str:

@@ -85,7 +85,12 @@ class OpenAICompatibleClient:
         trace = []
         submit_rejected_count = 0
         last_request = None
+        request_char_count_total = 0
+        request_char_count_max = 0
         for round_index in range(1, max_rounds + 1):
+            request_char_count = sum(len(message.get("content", "")) for message in messages)
+            request_char_count_total += request_char_count
+            request_char_count_max = max(request_char_count_max, request_char_count)
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -129,18 +134,11 @@ class OpenAICompatibleClient:
                     "submit_rejected_count": submit_rejected_count,
                     "round_limit_reached": False,
                     "final_tool_request": last_request,
+                    "request_char_count_total": request_char_count_total,
+                    "request_char_count_max": request_char_count_max,
                 }
             rounds_remaining = max_rounds - round_index
-            protocol_instruction = "Continue using tools only if needed; finish with submit_bids."
-            if tool_name == "check_schedule" and tool_result.get("feasible"):
-                protocol_instruction = "The checked proposal is feasible. Call submit_bids with the same bids now."
-            elif tool_name == "submit_bids" and tool_result.get("status") == "rejected":
-                protocol_instruction = "Fix the returned violations and call submit_bids again."
-            elif rounds_remaining <= 2:
-                protocol_instruction = (
-                    "You are near the round limit. Stop browsing. Call submit_bids next using the best feasible "
-                    "courses you already know."
-                )
+            protocol_instruction = session.build_protocol_instruction(tool_name, tool_result, rounds_remaining)
             messages.append({"role": "assistant", "content": json.dumps(tool_request, ensure_ascii=False)})
             messages.append(
                 {
@@ -163,6 +161,8 @@ class OpenAICompatibleClient:
             "submit_rejected_count": submit_rejected_count,
             "round_limit_reached": True,
             "final_tool_request": last_request,
+            "request_char_count_total": request_char_count_total,
+            "request_char_count_max": request_char_count_max,
             "error": f"tool interaction exceeded max_rounds={max_rounds}",
         }
 
