@@ -117,6 +117,12 @@ agent_design:
   non_llm_agent_types:
     - scripted_policy
 
+llm_context:
+  max_displayed_course_sections: 40
+  max_retries_on_invalid_output: 1
+  display_policy: attention_window_required_sections_then_high_utility
+  filtered_courses_remain_eligible: true
+
 formula_parameters:
   formula_multiplier_name: rho
   formula_multiplier_rho_range:

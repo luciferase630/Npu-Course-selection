@@ -8,7 +8,10 @@ from pathlib import Path
 from src.data_generation.generate_synthetic_mvp import (
     TIME_BLOCKS,
     WEEKDAYS,
+    build_custom_dataset,
     build_medium_dataset,
+    default_output_dir_for_preset,
+    build_shape,
     write_dataset,
 )
 from src.data_generation.io import (
@@ -175,6 +178,52 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertEqual(paths["profiles"], Path("custom/profiles.csv"))
         self.assertEqual(paths["profile_requirements"], Path("custom/profile_requirements.csv"))
         self.assertEqual(paths["students"], Path("custom/students.csv"))
+
+    def test_custom_small_dataset_matches_requested_shape(self) -> None:
+        dataset = build_custom_dataset(42, n_students=10, n_course_sections=20, n_profiles=3)
+        self.assertEqual(len(dataset["profiles"]), 3)
+        self.assertEqual(len(dataset["students"]), 10)
+        self.assertEqual(len(dataset["courses"]), 20)
+        self.assertEqual(len(dataset["utilities"]), 200)
+        self.assertTrue(all(edge["eligible"] == "true" for edge in dataset["utilities"]))
+        profile_ids = {profile["profile_id"] for profile in dataset["profiles"]}
+        self.assertTrue(all(student["profile_id"] in profile_ids for student in dataset["students"]))
+        self.assertEqual(dataset["metadata"]["preset"], "custom")
+        self.assertEqual(dataset["metadata"]["n_students"], 10)
+        self.assertEqual(dataset["metadata"]["n_course_sections"], 20)
+        self.assertEqual(dataset["metadata"]["profile_count"], 3)
+
+    def test_custom_default_output_dir_uses_scale_and_seed(self) -> None:
+        shape = build_shape("custom", n_students=10, n_course_sections=20, n_profiles=3)
+        self.assertEqual(
+            default_output_dir_for_preset("custom", 42, shape),
+            Path("data/synthetic/n10_c20_p3_seed42"),
+        )
+
+    def test_custom_dataset_seed_behavior(self) -> None:
+        first = build_custom_dataset(42, n_students=10, n_course_sections=20, n_profiles=3)
+        second = build_custom_dataset(42, n_students=10, n_course_sections=20, n_profiles=3)
+        third = build_custom_dataset(43, n_students=10, n_course_sections=20, n_profiles=3)
+        with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
+            first_root = Path(first_dir)
+            second_root = Path(second_dir)
+            write_dataset(first, first_root)
+            write_dataset(second, second_root)
+            for filename in [
+                "profiles.csv",
+                "profile_requirements.csv",
+                "students.csv",
+                "courses.csv",
+                "student_course_code_requirements.csv",
+                "student_course_utility_edges.csv",
+                "generation_metadata.json",
+            ]:
+                self.assertTrue(
+                    filecmp.cmp(first_root / filename, second_root / filename, shallow=False),
+                    filename,
+                )
+        self.assertNotEqual(first["metadata"]["effective_seed"], third["metadata"]["effective_seed"])
+        self.assertNotEqual(first["utilities"], third["utilities"])
 
 
 if __name__ == "__main__":

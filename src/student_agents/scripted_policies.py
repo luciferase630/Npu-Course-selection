@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from src.student_agents.context import split_time_slots
+
 
 SUPPORTED_SCRIPTED_POLICIES = {
     "equal_split",
@@ -36,15 +38,25 @@ def _action_type(selected: bool, bid: int, previous_selected: bool, previous_bid
     return "keep"
 
 
-def _top_unique_code(candidates: list[dict], max_courses: int) -> list[dict]:
+def _top_feasible(candidates: list[dict], max_courses: int, credit_cap: float) -> list[dict]:
     selected = []
     seen_codes: set[str] = set()
+    used_time_slots: set[str] = set()
+    credits = 0.0
     for candidate in candidates:
-        code = candidate["course"]["course_code"]
+        course = candidate["course"]
+        code = course["course_code"]
         if code in seen_codes:
+            continue
+        course_slots = split_time_slots(str(course.get("time_slot", "")))
+        if used_time_slots & course_slots:
+            continue
+        if credits + float(course.get("credit", 0)) > credit_cap:
             continue
         selected.append(candidate)
         seen_codes.add(code)
+        used_time_slots.update(course_slots)
+        credits += float(course.get("credit", 0))
         if len(selected) >= max_courses:
             break
     return selected
@@ -117,37 +129,40 @@ def run_scripted_policy(policy_name: str, private_context: dict, state_snapshot:
         raise ValueError(f"Unsupported scripted policy: {policy_name}")
 
     budget = int(private_context["budget_initial"])
+    credit_cap = float(private_context.get("credit_cap", 30))
     time_point = int(state_snapshot["time_point"])
     time_to_deadline = int(state_snapshot["time_to_deadline"])
     candidates = _build_candidates(private_context, state_snapshot)
     max_courses = 4
 
     if policy_name == "equal_split":
-        selected = _top_unique_code(sorted(candidates, key=lambda item: item["utility"], reverse=True), max_courses)
+        selected = _top_feasible(sorted(candidates, key=lambda item: item["utility"], reverse=True), max_courses, credit_cap)
         bids = _allocate_equal(selected, budget)
     elif policy_name in {"utility_weighted", "teacher_preference"}:
-        selected = _top_unique_code(sorted(candidates, key=lambda item: item["utility"], reverse=True), max_courses)
+        selected = _top_feasible(sorted(candidates, key=lambda item: item["utility"], reverse=True), max_courses, credit_cap)
         bids = _allocate_weighted(selected, budget, "utility")
     elif policy_name == "required_penalty_first":
-        selected = _top_unique_code(
+        selected = _top_feasible(
             sorted(candidates, key=lambda item: (item["required_penalty"], item["utility"]), reverse=True),
             max_courses,
+            credit_cap,
         )
         bids = _allocate_weighted(selected, budget, "score")
     elif policy_name == "conservative_capacity":
-        selected = _top_unique_code(
+        selected = _top_feasible(
             sorted(candidates, key=lambda item: (item["crowding"], -item["utility"])),
             max_courses,
+            credit_cap,
         )
         bids = _allocate_equal(selected, max(0, int(budget * 0.65)), bid_zero_if_safe=time_to_deadline == 0)
     elif policy_name == "aggressive_top_utility":
-        selected = _top_unique_code(sorted(candidates, key=lambda item: item["utility"], reverse=True), 2)
+        selected = _top_feasible(sorted(candidates, key=lambda item: item["utility"], reverse=True), 2, credit_cap)
         bids = _allocate_weighted(selected, budget, "utility")
     elif policy_name == "near_capacity_zero_bid":
-        selected = _top_unique_code(sorted(candidates, key=lambda item: item["score"], reverse=True), max_courses)
+        selected = _top_feasible(sorted(candidates, key=lambda item: item["score"], reverse=True), max_courses, credit_cap)
         bids = _allocate_equal(selected, max(0, int(budget * 0.55)), bid_zero_if_safe=time_to_deadline <= 1)
     else:  # last_minute_snipe
-        selected = _top_unique_code(sorted(candidates, key=lambda item: item["score"], reverse=True), 2)
+        selected = _top_feasible(sorted(candidates, key=lambda item: item["score"], reverse=True), 2, credit_cap)
         snipe_budget = budget if time_to_deadline == 0 or time_point > 1 else max(0, int(budget * 0.25))
         bids = _allocate_weighted(selected, snipe_budget, "score")
 

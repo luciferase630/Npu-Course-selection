@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from src.llm_clients.openai_client import load_local_env, parse_json_object
+
+
+class OpenAIEnvLoadingTests(unittest.TestCase):
+    def test_load_local_env_sets_missing_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env.local"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "OPENAI_API_KEY=local-test-key",
+                        "OPENAI_MODEL=mimo-v2-flash",
+                        "OPENAI_BASE_URL=https://api.xiaomimimo.com/v1",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            old_values = {key: os.environ.get(key) for key in ["OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"]}
+            for key in old_values:
+                os.environ.pop(key, None)
+            try:
+                load_local_env(env_path)
+                self.assertEqual(os.environ["OPENAI_API_KEY"], "local-test-key")
+                self.assertEqual(os.environ["OPENAI_MODEL"], "mimo-v2-flash")
+                self.assertEqual(os.environ["OPENAI_BASE_URL"], "https://api.xiaomimimo.com/v1")
+            finally:
+                for key, value in old_values.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+    def test_load_local_env_does_not_override_existing_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / ".env.local"
+            env_path.write_text("OPENAI_MODEL=mimo-v2-flash\n", encoding="utf-8")
+            old_value = os.environ.get("OPENAI_MODEL")
+            os.environ["OPENAI_MODEL"] = "already-set"
+            try:
+                load_local_env(env_path)
+                self.assertEqual(os.environ["OPENAI_MODEL"], "already-set")
+            finally:
+                if old_value is None:
+                    os.environ.pop("OPENAI_MODEL", None)
+                else:
+                    os.environ["OPENAI_MODEL"] = old_value
+
+    def test_parse_json_object_accepts_trailing_text(self) -> None:
+        parsed = parse_json_object('{"student_id":"S001"}\nextra explanation')
+        self.assertEqual(parsed["student_id"], "S001")
+
+    def test_parse_json_object_accepts_markdown_fence(self) -> None:
+        parsed = parse_json_object('```json\n{"student_id":"S001"}\n```')
+        self.assertEqual(parsed["student_id"], "S001")
+
+
+if __name__ == "__main__":
+    unittest.main()

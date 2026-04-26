@@ -1,6 +1,6 @@
 # 全量基础数据集分布审阅规范
 
-本文定义 `medium` 合成数据集生成后的审阅标准。它用于检查数据是否足够真实、是否符合建模口径、是否会因为生成偏差污染实验结论。
+本文定义合成数据集生成后的审阅标准。它用于检查数据是否足够真实、是否符合建模口径、是否会因为生成偏差污染实验结论。默认审阅对象是 `medium`，同一组结构性检查也适用于 `custom` 小规模数据集。
 
 ## 1. 输入与输出检查
 
@@ -38,10 +38,13 @@
 - 课程代码数：`110-140`
 - 培养方案数：`3-5`
 
+`custom` 目标由命令行参数决定。例如 `--n-students 10 --n-course-sections 20 --n-profiles 3` 时，审阅目标就是 `10` 名学生、`20` 个教学班、`3` 个培养方案。
+
 验收标准：
 
-- 教学班数必须严格等于 `200`，除非 review 时明确说明原因。
-- 课程代码数必须落在 `110-140`。
+- `medium` 教学班数必须严格等于 `200`，除非 review 时明确说明原因。
+- `medium` 课程代码数必须落在 `110-140`。
+- `custom` 学生数、教学班数和 profile 数必须严格等于命令行参数；课程代码数由生成器派生，但不能小于满足所有 profile requirements 的最小课程代码数。
 - 每个 `course_code` 至少对应 1 个教学班。
 - 应存在一批多教学班课程代码。
 - 每个 profile 至少关联 3 个 `required` course_code。
@@ -64,7 +67,7 @@ requirements 派生正确性：
 required 可满足性：
 
 - 对每条 profile requirement，`courses.csv` 中必须存在对应 `course_code`。
-- medium v1 默认所有学生对所有教学班 `eligible=true`，因此每条 student requirement 应自然有可申请教学班。
+- 当前 `medium` 和 `custom` 默认所有学生对所有教学班 `eligible=true`，因此每条 student requirement 应自然有可申请教学班。
 
 ## 4. 学分分布检查
 
@@ -133,8 +136,8 @@ Mon,Tue,Wed,Thu,Fri
 硬约束：
 
 - `eligible` 只表示学校系统是否允许申请该教学班，不表示专业匹配程度。
-- medium v1 不建先修课或行政限制表，因此每个学生都应对全部 `200` 个教学班 `eligible=true`。
-- `student_course_utility_edges.csv` 应包含完整边表：`40 × 200 = 8000` 行。
+- 当前不建先修课或行政限制表，因此每个学生都应对全部教学班 `eligible=true`。
+- `student_course_utility_edges.csv` 应包含完整边表：行数等于 `n_students × n_course_sections`。例如 `medium` 为 `8000` 行，`custom 10×20` 为 `200` 行。
 - 不应出现 `eligible=false`。
 - 每个学生的 required course_code 至少有一个可申请教学班；在全开放口径下，这应由完整边表自然保证。
 

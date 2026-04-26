@@ -133,7 +133,7 @@
 | `eligible` | 学校系统是否允许该学生申请该教学班 | `true` |
 | `utility` | 学生对该教学班的主观喜爱/吸引力 | `57` |
 
-`eligible` 是硬性申请资格，不是专业匹配程度。medium v1 不建先修课或行政限制表，因此所有学生对所有教学班默认 `eligible=true`，输出完整边表。profile 只影响 `utility` 的专业相关性和 `student_course_code_requirements.csv` 的课程代码要求。
+`eligible` 是硬性申请资格，不是专业匹配程度。当前 `medium` 和 `custom` 数据集不建先修课或行政限制表，因此所有学生对所有教学班默认 `eligible=true`，输出完整边表。profile 只影响 `utility` 的专业相关性和 `student_course_code_requirements.csv` 的课程代码要求。
 
 `utility` 是学生在选课开始前已经形成的主观喜爱程度，可能来自老师口碑、课程兴趣、给分传闻、时间偏好和朋友推荐。MVP 不拆解它的来源。课程学分、必修缺失惩罚、课程代码唯一约束、时间冲突和学分上限不写入这张边表，而是由 `courses.csv`、`students.csv`、`student_course_code_requirements.csv` 和可行课表约束处理。
 
@@ -169,7 +169,7 @@ MVP 当前输出：
 - `previous_bid` 与 `new_bid` 必须是非负整数。
 - `agent_type` 用于区分普通大模型、公式信息大模型、策略提示大模型和脚本策略学生。
 - `script_policy_name` 只在脚本策略学生中填写。
-- `action_type` 固定为：`keep`、`increase`、`decrease`、`withdraw`、`new_bid`。
+- `action_type` 固定为：`keep`、`increase`、`decrease`、`withdraw`、`new_bid`、`fallback_keep_previous`。
 - `behavior_tags` 是事后派生标签，用 `|` 连接，可以为空。
 - `withdraw` 表示撤出课程班，不是0豆保留待选。
 - `bid_events.csv` 记录过程，不直接用于开奖。

@@ -2,10 +2,49 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+
+
+def load_local_env(path: str | Path = ".env.local") -> None:
+    source = Path(path)
+    if not source.exists():
+        return
+    for raw_line in source.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip().strip('"').strip("'")
+        os.environ[key] = value
+
+
+def parse_json_object(content: str) -> dict:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        start = stripped.find("{")
+        if start < 0:
+            raise
+        parsed, _end = json.JSONDecoder().raw_decode(stripped[start:])
+    if not isinstance(parsed, dict):
+        raise json.JSONDecodeError("top-level JSON value is not an object", stripped, 0)
+    return parsed
 
 
 class OpenAICompatibleClient:
     def __init__(self) -> None:
+        load_local_env()
         api_key = os.environ.get("OPENAI_API_KEY")
         model = os.environ.get("OPENAI_MODEL")
         if not api_key:
@@ -36,7 +75,7 @@ class OpenAICompatibleClient:
         content = response.choices[0].message.content
         if not content:
             raise RuntimeError("OpenAI-compatible response had empty content")
-        return json.loads(content)
+        return parse_json_object(content)
 
 
 def build_llm_client(agent: str):

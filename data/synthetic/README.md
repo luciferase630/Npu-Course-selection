@@ -7,3 +7,9 @@
 ```powershell
 .venv\Scripts\python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
 ```
+
+小规模在线 LLM 测试可生成独立目录，避免覆盖默认数据：
+
+```powershell
+.venv\Scripts\python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset custom --n-students 10 --n-course-sections 20 --n-profiles 3 --seed 42
+```

@@ -42,8 +42,10 @@
 - 派生 `state_dependent_bean_cost_lambda`，把问题定义里的 $\lambda_i(\mathbf{s}_i)$ 落到运行时字段。
 - 从运行时状态生成 `state_snapshot`。
 - 组合出 `interaction_payload`。
+- 对在线 LLM 使用注意力窗口：全量课程仍保留在平台数据中，但单次调用只展示上一状态已选课程、必修课程代码相关教学班和高 `utility` 候选课。
+- 注意力窗口不是 `eligible` 过滤；它只控制一次 prompt 展示多少课程详情。
 - 校验大模型输出。
-- 失败时生成安全回退决策。
+- 失败时先生成具体错误反馈并重试一次；重试仍失败时生成 `fallback_keep_previous` 事件并保持上一状态。
 - 提供脚本策略代理，用作 E1/E2 对照实验。
 - 从 `bid_events.csv` 派生基础行为标签。
 
@@ -149,7 +151,9 @@ experiments
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset custom --n-students 10 --n-course-sections 20 --n-profiles 3 --seed 42
 python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id demo_001 --agent mock --experiment-group E0_llm_natural_baseline
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_mock --agent mock --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
 python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_model.yaml --run-prefix e0_mock --agent mock --experiment-group E0_llm_natural_baseline --n-repetitions 50
 ```
 
@@ -158,4 +162,5 @@ python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_
 ```powershell
 $env:OPENAI_API_KEY="..."
 $env:OPENAI_MODEL="..."
+$env:OPENAI_BASE_URL="..."  # 可选
 ```

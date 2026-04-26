@@ -86,10 +86,22 @@ python -m pip install -r requirements.txt
 python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
 ```
 
+生成 10×20×3 在线 LLM 小测试数据：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset custom --n-students 10 --n-course-sections 20 --n-profiles 3 --seed 42
+```
+
 运行 mock 大模型冒烟实验：
 
 ```powershell
 python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id medium_mock --agent mock --experiment-group E0_llm_natural_baseline
+```
+
+运行 10×20×3 小数据集 mock 验证：
+
+```powershell
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_mock --agent mock --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
 ```
 
 运行带单个脚本策略学生的对照实验：
@@ -116,8 +128,10 @@ outputs/runs/<run_id>/
 $env:OPENAI_API_KEY="..."
 $env:OPENAI_MODEL="..."
 # 可选：$env:OPENAI_BASE_URL="..."
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id real_llm_001 --agent openai --experiment-group E0_llm_natural_baseline
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id real_llm_001 --agent openai --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
 ```
+
+也可以在本地 `.env.local` 中保存上述 `OPENAI_*` 配置；该文件已被 `.gitignore` 忽略，不应提交。
 
 运行标准库测试：
 
@@ -127,11 +141,9 @@ python -m unittest discover
 
 ## 后续建议顺序
 
-1. 审阅 `docs/00_problem_definition_simple.md`，先确认单轮机制定义是否符合你对“all-pay”的理解。
-2. 审阅 `docs/01_problem_definition_realistic.md`，重点检查三轮规则、退豆规则、学分和时间约束是否贴近学校实际。
-3. 审阅 `docs/04_utility_and_formula_analysis.md`，先确认效用函数是否能表达必修、老师偏好、兴趣和课程班差异，再看公式分析是否符合“公式只能作为竞争信号”的定位。
-4. 审阅 `docs/05_intra_round_dynamic_bidding.md`，确认轮内多时间点改投豆策略是否贴近真实选课行为。
-5. 根据 `data/schemas/dataset_schema.md` 搭一个最小合成数据集，重点是 `student_course_utility_edges.csv` 和 `bid_events.csv`。
-6. 再开始写 Python 仿真和大模型调用代码。
+1. 用 `custom 10×20×3` 数据集跑一次 mock，再接入真实 OpenAI-compatible API 跑一次 E0 小测试。
+2. 审阅 `outputs/runs/<run_id>/llm_traces.jsonl`，重点看大模型是否理解效用、预算、待选人数和整数投豆。
+3. 若在线小测试稳定，再用 `medium` 数据集跑 E0/E1/E2 mock，观察基础行为标签和效用差。
+4. 再决定是否进入 E3/E4/E5：策略提示、公式信息冲击和公式回测。
 
 实现时必须先校验投豆整数性：大模型、公式或启发式策略输出的小数建议只能作为中间信号，进入 `decisions.csv` 和开奖机制前必须转换为非负整数，并保证总投豆不超过整数预算。

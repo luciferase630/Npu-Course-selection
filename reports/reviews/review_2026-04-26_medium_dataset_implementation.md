@@ -1,6 +1,6 @@
 # 审阅报告：Medium 数据集实现（Codex 修订版）
 
-**审阅时间**：2026-04-26
+**审阅时间**：2026-04-26 15:16:27
 **审阅对象**：
 - spec/06_full_dataset_generation_spec.md（已修订）
 - spec/07_full_dataset_distribution_review_spec.md（已修订）

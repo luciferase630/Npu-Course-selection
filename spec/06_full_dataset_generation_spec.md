@@ -1,18 +1,33 @@
 # 全量基础数据集生成规范
 
-本文定义 `medium` 合成数据集的生成口径。目标不是复刻真实教务系统，而是生成一个足够接近现实、能支撑单轮 all-pay 实验的基础数据集。
+本文定义合成数据集的生成口径。目标不是复刻真实教务系统，而是生成一个足够接近现实、能支撑单轮 all-pay 实验的基础数据集。
 
 本规范只定义数据生成方法和 CSV 结构。实验 runtime 仍只依赖四张 MVP 主表；`profiles.csv` 和 `profile_requirements.csv` 是生成阶段和 review 阶段使用的培养方案定义表。
 
 ## 1. 数据集规模
 
-默认生成规模：
+支持三种 preset：
+
+- `smoke`：最小内置冒烟数据，用于机制检查。
+- `medium`：标准基础数据集，默认 `40学生 × 200教学班 × 4培养方案`。
+- `custom`：参数化数据集，用于在线 LLM 小规模测试，例如 `10学生 × 20教学班 × 3培养方案`。
+
+`medium` 默认生成规模：
 
 - 学生数：`n_students=40`
 - 教学班数：`n_course_sections=200`
 - 课程代码数：约 `110-140`
 - 培养方案数：`3-5` 个，第一版默认 `CS_2026`、`SE_2026`、`AI_2026`、`MATH_2026`
 - 随机种子：必须可配置，默认沿用 `configs/simple_model.yaml` 中的 `random_seed`
+
+`custom` 必须支持以下参数：
+
+- `--n-students`
+- `--n-course-sections`
+- `--n-profiles`
+- `--seed`
+
+如果不传参数，`custom` 默认按 `10学生 × 20教学班 × 3培养方案` 生成。课程代码数由生成器自动派生，第一版约为教学班数的 `64%`，但不得低于满足各 profile requirements 的最小课程代码数。
 
 同一 `course_code` 可以对应多个 `course_id`，表示同一门课的不同教学班、老师或时间。
 
@@ -22,7 +37,15 @@
 data/synthetic/
 ```
 
-medium 生成器应输出：
+`custom` 不指定 `--output-dir` 时，默认输出目录必须带规模和 seed，避免不同数据集互相覆盖：
+
+```text
+data/synthetic/n10_c20_p3_seed42
+```
+
+其中 `n10` 表示学生数，`c20` 表示教学班数，`p3` 表示培养方案数。
+
+生成器应输出：
 
 - `profiles.csv`
 - `profile_requirements.csv`
@@ -217,12 +240,12 @@ deadline_term,substitute_group_id,notes
 可满足性硬要求：
 
 - 每个 required `course_code` 必须在 `courses.csv` 中至少有一个教学班。
-- medium v1 默认所有教学班都允许所有学生申请，因此每个学生的 required course_code 会自然有 `eligible=true` 的候选教学班。
+- 当前 `medium` 和 `custom` 数据集默认所有教学班都允许所有学生申请，因此每个学生的 required course_code 会自然有 `eligible=true` 的候选教学班。
 - 本表不包含 `missing_required_penalty`；惩罚由运行时派生。
 
 ## 8. student_course_utility_edges.csv
 
-这是学生-教学班喜爱程度的边表。medium v1 默认生成完整边表。
+这是学生-教学班喜爱程度的边表。`medium` 和 `custom` 默认生成完整边表。
 
 必需字段：
 
@@ -235,8 +258,8 @@ student_id,course_id,eligible,utility
 eligible 规则：
 
 - `eligible` 只表示学校系统是否允许学生申请该教学班，是硬性申请资格，不表示学生是否属于本专业。
-- medium v1 不建先修课、年级限制或行政限制表，因此所有学生对所有教学班默认 `eligible=true`。
-- medium v1 应输出完整边表：`40 × 200 = 8000` 条学生-教学班边。
+- 当前不建先修课、年级限制或行政限制表，因此所有学生对所有教学班默认 `eligible=true`。
+- 生成器应输出完整边表：边数等于 `n_students × n_course_sections`。例如 `medium` 为 `40 × 200 = 8000` 条边，`custom 10×20` 为 `200` 条边。
 - 跨专业选课默认允许；profile 不直接过滤 eligible。
 - 专业差异通过 `utility` 中的 `profile_relevance` 和 `student_course_code_requirements.csv` 的必修压力体现。
 - 未来若要模拟先修课硬门槛，应新增独立 prerequisite/administrative eligibility 规则，而不是用 profile 直接过滤。
@@ -295,7 +318,7 @@ utility = clamp(
 
 ## 10. 生成器接口
 
-推荐命令：
+生成标准 medium 数据：
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
@@ -307,6 +330,24 @@ python -m src.data_generation.generate_synthetic_mvp --config configs/simple_mod
 python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium --output-dir data/synthetic/medium
 ```
 
+生成在线 LLM 小规模测试数据：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset custom --n-students 10 --n-course-sections 20 --n-profiles 3 --seed 42
+```
+
+上述命令默认输出到：
+
+```text
+data/synthetic/n10_c20_p3_seed42
+```
+
 若使用非默认输出目录，实验配置需要同时指向对应的 `student_source`、`course_metadata_source`、`utility_source` 和 `requirements_source`。
+
+运行实验时也可以直接使用 `--data-dir` 覆盖数据源路径：
+
+```powershell
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_mock --agent mock --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
+```
 
 生成器必须 deterministic：同一 seed、同一配置、同一代码版本应生成完全相同的 CSV。

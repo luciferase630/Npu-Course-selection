@@ -42,6 +42,15 @@ class CourseCodeSpec:
     is_public_required: bool
 
 
+@dataclass(frozen=True)
+class GenerationShape:
+    preset: str
+    n_students: int
+    n_course_sections: int
+    n_profiles: int
+    n_course_codes: int
+
+
 def clamp(value: float, lower: int = 1, upper: int = 100) -> int:
     return max(lower, min(upper, int(round(value))))
 
@@ -55,6 +64,54 @@ def weighted_choice(rng: random.Random, items: list[str], weights: dict[str, flo
         if point <= cumulative:
             return item
     return items[-1]
+
+
+def proportional_labels(total: int, weighted_labels: list[tuple[str, float]]) -> list[str]:
+    raw_counts = [(label, total * weight) for label, weight in weighted_labels]
+    counts = {label: int(math.floor(raw)) for label, raw in raw_counts}
+    remaining = total - sum(counts.values())
+    by_fraction = sorted(raw_counts, key=lambda item: item[1] - math.floor(item[1]), reverse=True)
+    for label, _raw in by_fraction[:remaining]:
+        counts[label] += 1
+    labels: list[str] = []
+    for label, _weight in weighted_labels:
+        labels.extend([label] * counts[label])
+    return labels
+
+
+def default_course_code_count(n_course_sections: int, n_profiles: int) -> int:
+    minimum = minimum_course_code_count(n_profiles)
+    if n_course_sections < minimum:
+        raise ValueError(
+            f"n_course_sections={n_course_sections} is too small for {n_profiles} profiles; "
+            f"minimum is {minimum}"
+        )
+    return min(n_course_sections, max(minimum, round(n_course_sections * 0.64)))
+
+
+def minimum_course_code_count(n_profiles: int) -> int:
+    return 4 + max(2 + n_profiles, 5) + max(n_profiles, 3) + 1 + 1 + 1
+
+
+def build_shape(
+    preset: str,
+    n_students: int | None = None,
+    n_course_sections: int | None = None,
+    n_profiles: int | None = None,
+) -> GenerationShape:
+    if preset == "medium":
+        return GenerationShape("medium", 40, 200, 4, 128)
+    if preset != "custom":
+        raise ValueError(f"shape is not defined for preset {preset}")
+    students = n_students or 10
+    course_sections = n_course_sections or 20
+    profile_count = n_profiles or 3
+    if students <= 0:
+        raise ValueError("n_students must be positive")
+    if not 3 <= profile_count <= len(PROFILE_ROWS):
+        raise ValueError(f"n_profiles must be between 3 and {len(PROFILE_ROWS)}")
+    course_codes = default_course_code_count(course_sections, profile_count)
+    return GenerationShape("custom", students, course_sections, profile_count, course_codes)
 
 
 def build_smoke_dataset(seed: int) -> dict[str, object]:
@@ -223,16 +280,48 @@ def build_smoke_dataset(seed: int) -> dict[str, object]:
     }
 
 
-def build_course_code_specs() -> list[CourseCodeSpec]:
-    category_counts = {
-        "Foundation": 20,
-        "MajorCore": 30,
-        "MajorElective": 42,
-        "GeneralElective": 22,
-        "English": 5,
-        "PE": 5,
-        "LabSeminar": 4,
+def category_counts_for_shape(n_course_codes: int, n_profiles: int) -> dict[str, int]:
+    if n_course_codes == 128 and n_profiles == 4:
+        return {
+            "Foundation": 20,
+            "MajorCore": 30,
+            "MajorElective": 42,
+            "GeneralElective": 22,
+            "English": 5,
+            "PE": 5,
+            "LabSeminar": 4,
+        }
+    counts = {
+        "Foundation": 4,
+        "MajorCore": max(2 + n_profiles, 5),
+        "MajorElective": max(n_profiles, 3),
+        "GeneralElective": 1,
+        "English": 1,
+        "PE": 1,
+        "LabSeminar": 0,
     }
+    minimum = sum(counts.values())
+    if n_course_codes < minimum:
+        raise ValueError(f"n_course_codes={n_course_codes} is below minimum {minimum}")
+    weights = {
+        "Foundation": 2.0,
+        "MajorCore": 2.4,
+        "MajorElective": 2.3,
+        "GeneralElective": 1.5,
+        "English": 0.6,
+        "PE": 0.5,
+        "LabSeminar": 0.7,
+    }
+    categories = list(counts)
+    while sum(counts.values()) < n_course_codes:
+        selected = max(categories, key=lambda category: weights[category] / (counts[category] + 1))
+        counts[selected] += 1
+    return counts
+
+
+def build_course_code_specs(profiles: list[dict] | None = None, n_course_codes: int = 128) -> list[CourseCodeSpec]:
+    profile_ids = [str(row["profile_id"]) for row in (profiles or PROFILE_ROWS)]
+    category_counts = category_counts_for_shape(n_course_codes, len(profile_ids))
     name_roots = {
         "Foundation": [
             "Calculus",
@@ -304,21 +393,19 @@ def build_course_code_specs() -> list[CourseCodeSpec]:
             name = root if suffix == 1 else f"{root} {suffix}"
             code = f"{prefixes[category]}{index:03d}"
             if category in {"Foundation", "English"}:
-                tags = tuple(PROFILES)
+                tags = tuple(profile_ids)
                 public_required = True
             elif category == "MajorCore":
-                if index <= 4:
-                    tags = ("CS_2026", "SE_2026", "AI_2026")
-                elif index <= 6:
-                    tags = tuple(PROFILES)
+                if index <= 2:
+                    tags = tuple(profile_ids)
                 else:
-                    tags = (PROFILES[(index - 7) % len(PROFILES)],)
+                    tags = (profile_ids[(index - 3) % len(profile_ids)],)
                 public_required = index <= 15
             elif category == "MajorElective":
-                tags = (PROFILES[(index - 1) % len(PROFILES)],)
+                tags = (profile_ids[(index - 1) % len(profile_ids)],)
                 public_required = False
             else:
-                tags = tuple(PROFILES)
+                tags = tuple(profile_ids)
                 public_required = False
             specs.append(CourseCodeSpec(code, name, category, tags, public_required))
     return specs
@@ -357,22 +444,30 @@ def generate_time_slot(rng: random.Random, credit: float, category: str) -> str:
     return "|".join(sorted(picked))
 
 
-def generate_profiles() -> list[dict]:
-    return [dict(row) for row in PROFILE_ROWS]
+def generate_profiles(n_profiles: int = 4) -> list[dict]:
+    if not 3 <= n_profiles <= len(PROFILE_ROWS):
+        raise ValueError(f"n_profiles must be between 3 and {len(PROFILE_ROWS)}")
+    return [dict(row) for row in PROFILE_ROWS[:n_profiles]]
 
 
-def generate_students(rng: random.Random, profiles: list[dict]) -> list[dict]:
+def generate_students(rng: random.Random, profiles: list[dict], n_students: int = 40) -> list[dict]:
     profile_ids = [str(row["profile_id"]) for row in profiles]
     profile_assignments = []
-    for index in range(40):
+    for index in range(n_students):
         profile_assignments.append(profile_ids[index % len(profile_ids)])
-    risks = ["balanced"] * 20 + ["conservative"] * 10 + ["aggressive"] * 10
-    grades = ["sophomore"] * 8 + ["junior"] * 16 + ["senior"] * 12 + ["graduation_term"] * 4
+    risks = proportional_labels(
+        n_students,
+        [("balanced", 0.5), ("conservative", 0.25), ("aggressive", 0.25)],
+    )
+    grades = proportional_labels(
+        n_students,
+        [("sophomore", 0.2), ("junior", 0.4), ("senior", 0.3), ("graduation_term", 0.1)],
+    )
     rng.shuffle(profile_assignments)
     rng.shuffle(risks)
     rng.shuffle(grades)
     rows: list[dict] = []
-    for index in range(40):
+    for index in range(n_students):
         profile_id = profile_assignments[index]
         profile_row = PROFILE_BY_ID[profile_id]
         rows.append(
@@ -394,7 +489,11 @@ def generate_students(rng: random.Random, profiles: list[dict]) -> list[dict]:
 def generate_course_sections(
     rng: random.Random,
     code_specs: list[CourseCodeSpec],
+    n_course_sections: int = 200,
+    n_students: int = 40,
 ) -> tuple[list[dict], dict[str, float], dict[str, float], dict[str, CourseCodeSpec]]:
+    if n_course_sections < len(code_specs):
+        raise ValueError(f"n_course_sections={n_course_sections} is below course_code count {len(code_specs)}")
     spec_by_code = {spec.course_code: spec for spec in code_specs}
     section_counts = {spec.course_code: 1 for spec in code_specs}
     extra_weights = {
@@ -406,7 +505,7 @@ def generate_course_sections(
         "PE": 1.5,
         "LabSeminar": 1.1,
     }
-    while sum(section_counts.values()) < 200:
+    while sum(section_counts.values()) < n_course_sections:
         candidates = [spec.course_code for spec in code_specs if section_counts[spec.course_code] < 4]
         selected = weighted_choice(
             rng,
@@ -415,7 +514,8 @@ def generate_course_sections(
         )
         section_counts[selected] += 1
 
-    teacher_ids = [f"T{index:03d}" for index in range(1, 71)]
+    teacher_count = 70 if n_course_sections >= 100 else max(8, math.ceil(n_course_sections * 0.6))
+    teacher_ids = [f"T{index:03d}" for index in range(1, teacher_count + 1)]
     teacher_quality = {teacher_id: rng.gauss(0, 13) for teacher_id in teacher_ids}
     course_quality = {spec.course_code: rng.gauss(0, 10) for spec in code_specs}
     rows: list[dict] = []
@@ -425,7 +525,19 @@ def generate_course_sections(
             teacher_id = rng.choice(teacher_ids)
             section_letter = chr(ord("A") + section_index)
             is_hot_required = spec.category in {"Foundation", "English", "MajorCore"} and spec.is_public_required
-            if is_hot_required and rng.random() < 0.65:
+            if n_students < 30:
+                capacity_ranges = {
+                    "Foundation": (max(2, round(n_students * 0.35)), max(3, round(n_students * 0.8))),
+                    "MajorCore": (max(2, round(n_students * 0.3)), max(3, round(n_students * 0.75))),
+                    "MajorElective": (max(2, round(n_students * 0.25)), max(3, round(n_students * 0.7))),
+                    "GeneralElective": (max(2, round(n_students * 0.25)), max(3, round(n_students * 0.9))),
+                    "English": (max(2, round(n_students * 0.3)), max(3, round(n_students * 0.75))),
+                    "PE": (max(2, round(n_students * 0.2)), max(3, round(n_students * 0.5))),
+                    "LabSeminar": (max(2, round(n_students * 0.2)), max(3, round(n_students * 0.5))),
+                }
+                low, high = capacity_ranges[spec.category]
+                capacity = rng.randint(min(low, high), max(low, high))
+            elif is_hot_required and rng.random() < 0.65:
                 capacity = rng.randint(30, 60)
             else:
                 ranges = {
@@ -678,7 +790,15 @@ def summarize_profile_requirements(profile_requirements: list[dict]) -> dict[str
     return {profile_id: dict(counter) for profile_id, counter in sorted(summary.items())}
 
 
-def validate_medium_dataset(dataset: dict[str, object]) -> dict[str, object]:
+def validate_medium_dataset(
+    dataset: dict[str, object],
+    *,
+    expected_students: int = 40,
+    expected_course_sections: int = 200,
+    expected_profiles: int | None = None,
+    course_code_range: tuple[int, int] = (110, 140),
+    preset_name: str = "medium",
+) -> dict[str, object]:
     profiles = list(dataset["profiles"])  # type: ignore[arg-type]
     profile_requirements = list(dataset["profile_requirements"])  # type: ignore[arg-type]
     students = list(dataset["students"])  # type: ignore[arg-type]
@@ -687,18 +807,21 @@ def validate_medium_dataset(dataset: dict[str, object]) -> dict[str, object]:
     utilities = list(dataset["utilities"])  # type: ignore[arg-type]
     errors: list[str] = []
 
-    if len(students) != 40:
-        errors.append(f"expected 40 students, got {len(students)}")
-    if len(courses) != 200:
-        errors.append(f"expected 200 course sections, got {len(courses)}")
+    if len(students) != expected_students:
+        errors.append(f"expected {expected_students} students, got {len(students)}")
+    if len(courses) != expected_course_sections:
+        errors.append(f"expected {expected_course_sections} course sections, got {len(courses)}")
     course_codes = {str(course["course_code"]) for course in courses}
-    if not 110 <= len(course_codes) <= 140:
-        errors.append(f"course_code count must be 110-140, got {len(course_codes)}")
+    min_codes, max_codes = course_code_range
+    if not min_codes <= len(course_codes) <= max_codes:
+        errors.append(f"course_code count must be {min_codes}-{max_codes}, got {len(course_codes)}")
     profile_ids = [str(profile["profile_id"]) for profile in profiles]
     if len(profile_ids) != len(set(profile_ids)):
         errors.append("profiles.csv profile_id values must be unique")
-    if not 3 <= len(profile_ids) <= 5:
-        errors.append(f"expected 3-5 profiles, got {len(profile_ids)}")
+    if expected_profiles is not None and len(profile_ids) != expected_profiles:
+        errors.append(f"expected {expected_profiles} profiles, got {len(profile_ids)}")
+    if not 3 <= len(profile_ids) <= len(PROFILE_ROWS):
+        errors.append(f"expected 3-{len(PROFILE_ROWS)} profiles, got {len(profile_ids)}")
     profile_id_set = set(profile_ids)
 
     profile_required_sets: dict[str, set[str]] = defaultdict(set)
@@ -754,7 +877,7 @@ def validate_medium_dataset(dataset: dict[str, object]) -> dict[str, object]:
         if extra_keys:
             errors.append(f"utility edge has unexpected fields {sorted(extra_keys)}")
         if str(row["eligible"]).lower() != "true":
-            errors.append(f"medium preset must emit eligible=true for every edge: {row}")
+            errors.append(f"{preset_name} preset must emit eligible=true for every edge: {row}")
         key = (str(row["student_id"]), str(row["course_id"]))
         if key in seen_edges:
             errors.append(f"duplicate utility edge {key}")
@@ -769,7 +892,7 @@ def validate_medium_dataset(dataset: dict[str, object]) -> dict[str, object]:
         student_id = str(student["student_id"])
         profile_id = str(student.get("profile_id", ""))
         if LEGACY_PROFILE_FIELD in student:
-            errors.append("students.csv must not contain the legacy profile field in medium preset")
+            errors.append(f"students.csv must not contain the legacy profile field in {preset_name} preset")
         if profile_id not in profile_id_set:
             errors.append(f"student {student_id} references unknown profile_id {profile_id}")
         profile_by_student[student_id] = profile_id
@@ -781,7 +904,7 @@ def validate_medium_dataset(dataset: dict[str, object]) -> dict[str, object]:
             errors.append(f"eligible count for {student_id} must equal all course sections ({len(courses)}), got {count}")
     expected_edge_count = len(students) * len(courses)
     if len(utilities) != expected_edge_count:
-        errors.append(f"medium preset must emit full utility edge table: expected {expected_edge_count}, got {len(utilities)}")
+        errors.append(f"{preset_name} preset must emit full utility edge table: expected {expected_edge_count}, got {len(utilities)}")
 
     edge_course_codes: dict[tuple[str, str], set[str]] = defaultdict(set)
     for row in utilities:
@@ -821,19 +944,24 @@ def validate_medium_dataset(dataset: dict[str, object]) -> dict[str, object]:
         "error_count": len(errors),
     }
     if errors:
-        raise ValueError("medium dataset validation failed: " + "; ".join(errors[:10]))
+        raise ValueError(f"{preset_name} dataset validation failed: " + "; ".join(errors[:10]))
     return quality_summary
 
 
-def build_medium_dataset(seed: int) -> dict[str, object]:
+def build_synthetic_dataset(seed: int, shape: GenerationShape) -> dict[str, object]:
     last_error: Exception | None = None
     for attempt in range(20):
         effective_seed = seed + attempt
         rng = random.Random(effective_seed)
-        code_specs = build_course_code_specs()
-        profiles = generate_profiles()
-        students = generate_students(rng, profiles)
-        courses, teacher_quality, course_quality, spec_by_code = generate_course_sections(rng, code_specs)
+        profiles = generate_profiles(shape.n_profiles)
+        code_specs = build_course_code_specs(profiles, shape.n_course_codes)
+        students = generate_students(rng, profiles, shape.n_students)
+        courses, teacher_quality, course_quality, spec_by_code = generate_course_sections(
+            rng,
+            code_specs,
+            shape.n_course_sections,
+            shape.n_students,
+        )
         profile_requirements = generate_profile_requirements(code_specs, profiles)
         requirements = generate_requirements(students, profile_requirements)
         utilities = generate_utility_edges(
@@ -854,12 +982,19 @@ def build_medium_dataset(seed: int) -> dict[str, object]:
             "utilities": utilities,
         }
         try:
-            quality_summary = validate_medium_dataset(dataset)
+            quality_summary = validate_medium_dataset(
+                dataset,
+                expected_students=shape.n_students,
+                expected_course_sections=shape.n_course_sections,
+                expected_profiles=shape.n_profiles,
+                course_code_range=(shape.n_course_codes, shape.n_course_codes),
+                preset_name=shape.preset,
+            )
         except ValueError as exc:
             last_error = exc
             continue
         dataset["metadata"] = {
-            "preset": "medium",
+            "preset": shape.preset,
             "seed": seed,
             "effective_seed": effective_seed,
             "generator_version": 1,
@@ -873,7 +1008,15 @@ def build_medium_dataset(seed: int) -> dict[str, object]:
             "quality_check_summary": quality_summary,
         }
         return dataset
-    raise ValueError(f"could not generate valid medium dataset after retries: {last_error}")
+    raise ValueError(f"could not generate valid {shape.preset} dataset after retries: {last_error}")
+
+
+def build_medium_dataset(seed: int) -> dict[str, object]:
+    return build_synthetic_dataset(seed, build_shape("medium"))
+
+
+def build_custom_dataset(seed: int, n_students: int, n_course_sections: int, n_profiles: int) -> dict[str, object]:
+    return build_synthetic_dataset(seed, build_shape("custom", n_students, n_course_sections, n_profiles))
 
 
 def write_dataset(dataset: dict[str, object], root: Path) -> None:
@@ -941,17 +1084,35 @@ def dataset_sizes(dataset: dict[str, object]) -> tuple[int, int, int, int]:
     return len(students), len(courses), len(requirements), len(utilities)
 
 
+def default_output_dir_for_preset(preset: str, seed: int, shape: GenerationShape | None = None) -> Path:
+    if preset == "custom" and shape is not None:
+        return Path("data/synthetic") / f"n{shape.n_students}_c{shape.n_course_sections}_p{shape.n_profiles}_seed{seed}"
+    return Path("data/synthetic")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic MVP all-pay data.")
     parser.add_argument("--config", default="configs/simple_model.yaml")
-    parser.add_argument("--preset", default="smoke", choices=["smoke", "medium"])
-    parser.add_argument("--output-dir", default="data/synthetic")
+    parser.add_argument("--preset", default="smoke", choices=["smoke", "medium", "custom"])
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--n-students", type=int, default=None)
+    parser.add_argument("--n-course-sections", type=int, default=None)
+    parser.add_argument("--n-profiles", type=int, default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
-    seed = int(config.get("random_seed", 20260425))
-    dataset = build_smoke_dataset(seed) if args.preset == "smoke" else build_medium_dataset(seed)
-    root = Path(args.output_dir)
+    seed = args.seed if args.seed is not None else int(config.get("random_seed", 20260425))
+    shape: GenerationShape | None = None
+    if args.preset == "smoke":
+        dataset = build_smoke_dataset(seed)
+    elif args.preset == "medium":
+        dataset = build_medium_dataset(seed)
+        shape = build_shape("medium")
+    else:
+        shape = build_shape("custom", args.n_students, args.n_course_sections, args.n_profiles)
+        dataset = build_synthetic_dataset(seed, shape)
+    root = Path(args.output_dir) if args.output_dir else default_output_dir_for_preset(args.preset, seed, shape)
     write_dataset(dataset, root)
     n_students, n_courses, n_requirements, n_utilities = dataset_sizes(dataset)
     print(

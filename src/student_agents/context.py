@@ -28,6 +28,25 @@ DEFAULT_GRADE_LAMBDA_MULTIPLIERS = {
 }
 
 
+def split_time_slots(time_slot: str) -> set[str]:
+    return {slot.strip() for slot in str(time_slot).split("|") if slot.strip()}
+
+
+def time_slots_overlap(left: str, right: str) -> bool:
+    return bool(split_time_slots(left) & split_time_slots(right))
+
+
+def _add_to_attention_window(
+    displayed_by_id: dict[str, dict],
+    candidates: list[dict],
+    max_displayed: int,
+) -> None:
+    for course in candidates:
+        if len(displayed_by_id) >= max_displayed:
+            return
+        displayed_by_id.setdefault(course["course_id"], course)
+
+
 def percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
@@ -109,13 +128,17 @@ def build_student_private_context(
     requirements: list[CourseRequirement],
     derived_penalties: dict[tuple[str, str], float],
     state_dependent_lambda: float,
+    previous_bid_vector: dict[str, dict] | None = None,
+    config: dict | None = None,
 ) -> dict:
-    available_courses: list[dict] = []
+    previous_bid_vector = previous_bid_vector or {}
+    max_displayed = int((config or {}).get("llm_context", {}).get("max_displayed_course_sections", 40))
+    all_available_courses: list[dict] = []
     for (student_id, course_id), edge in sorted(edges.items()):
         if student_id != student.student_id or not edge.eligible:
             continue
         course = courses[course_id]
-        available_courses.append(
+        all_available_courses.append(
             {
                 "course_id": course.course_id,
                 "course_code": course.course_code,
@@ -129,6 +152,36 @@ def build_student_private_context(
                 "utility": edge.utility,
             }
         )
+    required_codes = {
+        requirement.course_code for requirement in requirements if requirement.requirement_type == "required"
+    }
+    previously_selected_ids = {
+        course_id for course_id, item in previous_bid_vector.items() if item.get("selected")
+    }
+    displayed_by_id: dict[str, dict] = {}
+    previously_selected_courses = [
+        course for course in all_available_courses if course["course_id"] in previously_selected_ids
+    ]
+    previously_selected_courses.sort(key=lambda course: float(course["utility"]), reverse=True)
+    _add_to_attention_window(displayed_by_id, previously_selected_courses, max_displayed)
+
+    required_courses = [course for course in all_available_courses if course["course_code"] in required_codes]
+    required_courses.sort(key=lambda course: float(course["utility"]), reverse=True)
+    _add_to_attention_window(displayed_by_id, required_courses, max_displayed)
+
+    if len(displayed_by_id) < max_displayed:
+        remaining = [course for course in all_available_courses if course["course_id"] not in displayed_by_id]
+        remaining.sort(key=lambda course: float(course["utility"]), reverse=True)
+        _add_to_attention_window(displayed_by_id, remaining, max_displayed)
+    available_courses = sorted(displayed_by_id.values(), key=lambda course: course["course_id"])
+    for course in available_courses:
+        conflicts = [
+            other["course_id"]
+            for other in available_courses
+            if other["course_id"] != course["course_id"]
+            and time_slots_overlap(str(course["time_slot"]), str(other["time_slot"]))
+        ]
+        course["conflicts_with_displayed_course_ids"] = sorted(conflicts)
     requirement_rows = []
     for requirement in requirements:
         penalty = derived_penalties.get((student.student_id, requirement.course_code), 0.0)
@@ -151,6 +204,19 @@ def build_student_private_context(
         "bean_cost_lambda": state_dependent_lambda,
         "state_dependent_bean_cost_lambda": state_dependent_lambda,
         "available_course_sections": available_courses,
+        "catalog_visibility_summary": {
+            "total_eligible_course_sections": len(all_available_courses),
+            "displayed_course_sections": len(available_courses),
+            "filtered_out_count": max(0, len(all_available_courses) - len(available_courses)),
+            "max_displayed_course_sections": max_displayed,
+            "display_policy": "attention_window_required_sections_then_high_utility",
+            "attention_window_priority_order": [
+                "previously_selected_courses",
+                "required_course_code_sections_by_utility",
+                "remaining_courses_by_utility",
+            ],
+            "note": "Filtered-out courses remain administratively eligible, but are not shown in this MVP prompt.",
+        },
         "course_code_requirements": requirement_rows,
     }
 
@@ -167,8 +233,19 @@ def build_state_snapshot(
     budget_available: int,
 ) -> dict:
     course_states = []
+    previous_selected_courses = []
     for course in sorted(courses.values(), key=lambda item: item.course_id):
         previous = previous_bid_vector.get(course.course_id, {"selected": False, "bid": 0})
+        if previous["selected"]:
+            previous_selected_courses.append(
+                {
+                    "course_id": course.course_id,
+                    "course_code": course.course_code,
+                    "previous_bid": previous["bid"],
+                    "time_slot": course.time_slot,
+                    "credit": course.credit,
+                }
+            )
         course_states.append(
             {
                 "course_id": course.course_id,
@@ -185,12 +262,38 @@ def build_state_snapshot(
         "budget_initial": student.budget_initial,
         "budget_committed_previous": budget_committed_previous,
         "budget_available": budget_available,
+        "previous_selected_courses": previous_selected_courses,
         "course_states": course_states,
     }
 
 
-def build_interaction_payload(private_context: dict, state_snapshot: dict) -> dict:
-    return {
+def build_interaction_payload(
+    private_context: dict,
+    state_snapshot: dict,
+    retry_feedback: dict | None = None,
+) -> dict:
+    previous_selected = state_snapshot.get("previous_selected_courses", [])
+    payload = {
+        "hard_constraints_summary": {
+            "budget_available": state_snapshot.get("budget_available"),
+            "budget_initial": state_snapshot.get("budget_initial"),
+            "budget_committed_previous": state_snapshot.get("budget_committed_previous"),
+            "budget_available_meaning": (
+                "Remaining room if previous selected courses are kept unchanged. The submitted final bid vector "
+                "still must have total selected bid <= budget_initial."
+            ),
+            "credit_cap": private_context.get("credit_cap"),
+            "previous_selected_course_count": len(previous_selected),
+            "previous_selected_bid_total": sum(int(item.get("previous_bid", 0)) for item in previous_selected),
+            "must_check_before_submit": [
+                "sum bid for all selected=true courses must be <= budget_initial",
+                "selected courses must not exceed credit_cap",
+                "selected courses must not have overlapping time_slot fragments",
+                "selected courses must not repeat the same course_code",
+                "only submit bids for displayed available_course_sections",
+            ],
+        },
+        "catalog_visibility_summary": private_context.get("catalog_visibility_summary", {}),
         "student_private_context": private_context,
         "state_snapshot": state_snapshot,
         "output_schema": {
@@ -209,3 +312,6 @@ def build_interaction_payload(private_context: dict, state_snapshot: dict) -> di
             "overall_reasoning": "string",
         },
     }
+    if retry_feedback:
+        payload["retry_feedback"] = retry_feedback
+    return payload

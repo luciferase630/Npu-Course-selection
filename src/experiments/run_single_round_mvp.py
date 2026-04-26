@@ -28,7 +28,7 @@ from src.student_agents.context import (
     group_requirements_by_student,
 )
 from src.student_agents.scripted_policies import run_scripted_policy
-from src.student_agents.validation import validate_decision_output
+from src.student_agents.validation import ValidationResult, validate_decision_output
 
 
 def load_system_prompt(config: dict) -> str:
@@ -36,10 +36,95 @@ def load_system_prompt(config: dict) -> str:
     return prompt_path.read_text(encoding="utf-8")
 
 
+def apply_data_dir_override(config: dict, data_dir: str | None) -> None:
+    if not data_dir:
+        return
+    root = Path(data_dir)
+    objective = config.setdefault("objective", {})
+    objective["profile_source"] = str(root / "profiles.csv")
+    objective["profile_requirements_source"] = str(root / "profile_requirements.csv")
+    objective["student_source"] = str(root / "students.csv")
+    objective["course_metadata_source"] = str(root / "courses.csv")
+    objective["utility_source"] = str(root / "student_course_utility_edges.csv")
+    objective["requirements_source"] = str(root / "student_course_code_requirements.csv")
+
+
 def time_slots_overlap(left: str, right: str) -> bool:
     left_slots = {slot.strip() for slot in left.split("|") if slot.strip()}
     right_slots = {slot.strip() for slot in right.split("|") if slot.strip()}
     return bool(left_slots & right_slots)
+
+
+def common_time_slots(left: str, right: str) -> list[str]:
+    left_slots = {slot.strip() for slot in left.split("|") if slot.strip()}
+    right_slots = {slot.strip() for slot in right.split("|") if slot.strip()}
+    return sorted(left_slots & right_slots)
+
+
+def summarize_attempt(raw_output: object) -> dict:
+    if not isinstance(raw_output, dict):
+        return {"output_type": type(raw_output).__name__, "selected_count": 0, "total_bid": 0}
+    bids = raw_output.get("bids")
+    if not isinstance(bids, list):
+        return {"output_type": "dict", "selected_count": 0, "total_bid": 0, "note": "bids is not a list"}
+    selected_items = []
+    total_bid = 0
+    for item in bids:
+        if not isinstance(item, dict):
+            continue
+        selected = item.get("selected")
+        bid = item.get("bid", 0)
+        if isinstance(bid, int):
+            total_bid += bid if selected else 0
+        if selected:
+            selected_items.append({"course_id": item.get("course_id"), "bid": bid})
+    return {
+        "selected_count": len(selected_items),
+        "total_bid": total_bid,
+        "selected_preview": selected_items[:12],
+    }
+
+
+def build_retry_feedback(error: str, raw_output: object) -> dict:
+    concrete_instruction = f"Fix this exact rejection reason: {error}"
+    if "total bid" in error and "exceeds budget" in error:
+        concrete_instruction = (
+            f"{error}. Reduce bids or withdraw lower-priority courses until the total bid is within budget."
+        )
+    elif "time-conflicting courses" in error:
+        concrete_instruction = f"{error}. Keep at most one course from each conflicting pair."
+    elif "duplicate course_code" in error:
+        concrete_instruction = f"{error}. Keep only one section for that course_code."
+    elif "credits" in error and "above cap" in error:
+        concrete_instruction = f"{error}. Withdraw courses until total selected credits are within credit_cap."
+    return {
+        "previous_attempt_error": error,
+        "previous_attempt_summary": summarize_attempt(raw_output),
+        "repair_instruction": (
+            "Your previous output was rejected. Submit a corrected complete JSON object for the same student and "
+            "time point. Do not explain outside JSON. Reduce or withdraw courses until every hard constraint passes."
+        ),
+        "concrete_repair_instruction": concrete_instruction,
+        "must_fix_checklist": [
+            "Total bid across selected=true courses must be <= budget_initial.",
+            "Do not select courses whose time_slot fragments overlap.",
+            "Do not select more than one section with the same course_code.",
+            "Do not exceed credit_cap.",
+            "Only use course_id values shown in available_course_sections.",
+        ],
+    }
+
+
+def fallback_event(reason: str) -> dict:
+    return {
+        "course_id": "__fallback__",
+        "previous_selected": False,
+        "new_selected": False,
+        "previous_bid": 0,
+        "new_bid": 0,
+        "action_type": "fallback_keep_previous",
+        "reason": reason,
+    }
 
 
 def build_current_waitlist_counts(state: dict[tuple[str, str], BidState]) -> dict[str, int]:
@@ -98,19 +183,34 @@ def check_schedule_constraints(
     constraints_config: dict,
 ) -> str:
     selected_course_ids = [course_id for course_id, item in merged.items() if item["selected"]]
+    errors: list[str] = []
     if constraints_config.get("enforce_course_code_unique", False):
-        codes = [courses[course_id].course_code for course_id in selected_course_ids]
-        if len(codes) != len(set(codes)):
-            return f"student {student_id} selected duplicate course_code"
+        seen_by_code: dict[str, list[str]] = {}
+        for course_id in selected_course_ids:
+            code = courses[course_id].course_code
+            seen_by_code.setdefault(code, []).append(course_id)
+        duplicate_messages = [
+            f"duplicate course_code {code}: {', '.join(course_ids)}; keep only one section"
+            for code, course_ids in sorted(seen_by_code.items())
+            if len(course_ids) > 1
+        ]
+        errors.extend(duplicate_messages[:5])
     if constraints_config.get("enforce_time_conflict", False):
+        conflict_messages = []
         for index, left in enumerate(selected_course_ids):
             for right in selected_course_ids[index + 1 :]:
                 if time_slots_overlap(courses[left].time_slot, courses[right].time_slot):
-                    return f"student {student_id} selected time-conflicting courses {left} and {right}"
+                    overlap = ",".join(common_time_slots(courses[left].time_slot, courses[right].time_slot))
+                    conflict_messages.append(
+                        f"time-conflicting courses {left} and {right} because both contain {overlap}; choose at most one"
+                    )
+        errors.extend(conflict_messages[:8])
     if constraints_config.get("enforce_total_credit_cap", False):
         credits = sum(courses[course_id].credit for course_id in selected_course_ids)
         if credits > credit_cap:
-            return f"student {student_id} selected credits {credits} above cap {credit_cap}"
+            errors.append(f"selected credits {credits} above cap {credit_cap}")
+    if errors:
+        return f"student {student_id} constraint violations: " + " | ".join(errors)
     return ""
 
 
@@ -137,7 +237,7 @@ def apply_decision(
         merged[course_id] = item
     total_bid = sum(int(item["bid"]) for item in merged.values() if item["selected"])
     if total_bid > budget:
-        return False, "merged decision exceeds budget", []
+        return False, f"merged total bid {total_bid} exceeds budget {budget}", []
     constraint_error = check_schedule_constraints(student_id, merged, courses, credit_cap, constraints_config)
     if constraint_error:
         return False, constraint_error, []
@@ -241,9 +341,11 @@ def main() -> None:
     parser.add_argument("--experiment-group", default="E0_llm_natural_baseline")
     parser.add_argument("--script-policy", default="utility_weighted")
     parser.add_argument("--seed-offset", type=int, default=0)
+    parser.add_argument("--data-dir", default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
+    apply_data_dir_override(config, args.data_dir)
     paths = resolve_data_paths(config)
     students = load_students(paths["students"])
     courses = load_courses(paths["courses"])
@@ -287,6 +389,10 @@ def main() -> None:
     invalid_bid_count = 0
     over_budget_count = 0
     constraint_violation_rejected_count = 0
+    first_attempt_failure_count = 0
+    retry_attempt_count = 0
+    retry_success_count = 0
+    fallback_keep_previous_count = 0
 
     for time_point in range(1, time_points + 1):
         order = student_ids[:]
@@ -312,80 +418,118 @@ def main() -> None:
                 requirements_by_student.get(student_id, []),
                 derived_penalties,
                 state_lambda,
+                previous_vector,
+                config,
             )
+            displayed_course_ids = [course["course_id"] for course in private_context["available_course_sections"]]
             snapshot = build_state_snapshot(
                 args.run_id,
                 time_point,
                 time_points,
                 student,
-                {course_id: courses[course_id] for course_id in available_course_ids},
+                {course_id: courses[course_id] for course_id in displayed_course_ids},
                 current_counts,
                 previous_vector,
                 budget_committed_previous,
                 budget_available,
             )
-            payload = build_interaction_payload(private_context, snapshot)
             raw_output = None
             agent_type = agent_type_by_student[student_id]
             final_source = agent_type
-            try:
-                if agent_type == "scripted_policy":
-                    raw_output = run_scripted_policy(args.script_policy, private_context, snapshot)
-                else:
-                    raw_output = llm_client.complete(system_prompt, payload)
-                validation, normalized = validate_decision_output(
-                    raw_output,
-                    student_id,
-                    time_point,
-                    set(available_course_ids),
-                    student.budget_initial,
-                )
-            except json.JSONDecodeError as exc:
-                validation, normalized = validate_decision_output({}, student_id, time_point, set(), 0)
-                validation = type(validation)(False, f"json decode failed: {exc}")
-                json_failure_count += 1
-            except Exception as exc:
-                validation, normalized = validate_decision_output({}, student_id, time_point, set(), 0)
-                validation = type(validation)(False, str(exc))
-                json_failure_count += 1
-
-            if validation.valid:
-                applied, apply_error, events = apply_decision(
-                    student_id,
-                    available_course_ids,
-                    state,
-                    normalized,
-                    student.budget_initial,
-                    courses,
-                    student.credit_cap,
-                    config.get("constraints", {}),
-                )
-                if not applied:
-                    validation = type(validation)(False, apply_error)
-                    if "budget" in apply_error:
-                        over_budget_count += 1
+            events = []
+            attempts = []
+            retry_feedback = None
+            retry_config = config.get("llm_context", {})
+            max_retries = int(retry_config.get("max_retries_on_invalid_output", 1))
+            max_attempts = 1 if agent_type == "scripted_policy" else 1 + max(0, max_retries)
+            applied = False
+            validation = ValidationResult(False, "no attempt made")
+            for attempt_index in range(1, max_attempts + 1):
+                if attempt_index > 1:
+                    retry_attempt_count += 1
+                payload = build_interaction_payload(private_context, snapshot, retry_feedback)
+                raw_output = None
+                try:
+                    if agent_type == "scripted_policy":
+                        raw_output = run_scripted_policy(args.script_policy, private_context, snapshot)
                     else:
-                        constraint_violation_rejected_count += 1
-                    final_source = "fallback_keep_previous"
-                    events = []
-            else:
-                invalid_bid_count += 1
+                        raw_output = llm_client.complete(system_prompt, payload)
+                    validation, normalized = validate_decision_output(
+                        raw_output,
+                        student_id,
+                        time_point,
+                        set(displayed_course_ids),
+                        student.budget_initial,
+                    )
+                except json.JSONDecodeError as exc:
+                    validation, normalized = ValidationResult(False, f"json decode failed: {exc}"), {}
+                    json_failure_count += 1
+                except Exception as exc:
+                    validation, normalized = ValidationResult(False, str(exc)), {}
+                    json_failure_count += 1
+
+                if validation.valid:
+                    applied, apply_error, events = apply_decision(
+                        student_id,
+                        available_course_ids,
+                        state,
+                        normalized,
+                        student.budget_initial,
+                        courses,
+                        student.credit_cap,
+                        config.get("constraints", {}),
+                    )
+                    if not applied:
+                        validation = ValidationResult(False, apply_error)
+                attempts.append(
+                    {
+                        "attempt_index": attempt_index,
+                        "retry_feedback": retry_feedback,
+                        "raw_model_output": raw_output,
+                        "validation_result": {"valid": validation.valid and applied, "error": "" if applied else validation.error},
+                    }
+                )
+                if applied:
+                    final_source = agent_type if attempt_index == 1 else f"{agent_type}_retry_success"
+                    if attempt_index > 1:
+                        retry_success_count += 1
+                    break
+                if attempt_index == 1 and max_attempts > 1:
+                    first_attempt_failure_count += 1
+                if attempt_index < max_attempts:
+                    retry_feedback = build_retry_feedback(validation.error, raw_output)
+
+            if not applied:
                 final_source = "fallback_keep_previous"
-                events = []
+                fallback_keep_previous_count += 1
+                events = [fallback_event(validation.error)]
+                if "budget" in validation.error or "total bid" in validation.error:
+                    over_budget_count += 1
+                elif any(token in validation.error for token in ["time-conflicting", "duplicate", "credits"]):
+                    constraint_violation_rejected_count += 1
+                else:
+                    invalid_bid_count += 1
 
             counts_before = current_counts
             for event in events:
-                event_tags = derive_behavior_tags(
-                    time_point=time_point,
-                    time_points_total=time_points,
-                    observed_capacity=courses[event["course_id"]].capacity,
-                    observed_waitlist_count_before=counts_before.get(event["course_id"], 0),
-                    previous_selected=event["previous_selected"],
-                    new_selected=event["new_selected"],
-                    previous_bid=event["previous_bid"],
-                    new_bid=event["new_bid"],
-                    utility=edges[(student_id, event["course_id"])].utility,
-                )
+                if event["course_id"] == "__fallback__":
+                    event_tags = []
+                    observed_capacity = ""
+                    observed_waitlist = ""
+                else:
+                    event_tags = derive_behavior_tags(
+                        time_point=time_point,
+                        time_points_total=time_points,
+                        observed_capacity=courses[event["course_id"]].capacity,
+                        observed_waitlist_count_before=counts_before.get(event["course_id"], 0),
+                        previous_selected=event["previous_selected"],
+                        new_selected=event["new_selected"],
+                        previous_bid=event["previous_bid"],
+                        new_bid=event["new_bid"],
+                        utility=edges[(student_id, event["course_id"])].utility,
+                    )
+                    observed_capacity = courses[event["course_id"]].capacity
+                    observed_waitlist = counts_before.get(event["course_id"], 0)
                 bid_events.append(
                     {
                         "run_id": args.run_id,
@@ -396,8 +540,8 @@ def main() -> None:
                         "course_id": event["course_id"],
                         "agent_type": agent_type,
                         "script_policy_name": args.script_policy if agent_type == "scripted_policy" else "",
-                        "observed_capacity": courses[event["course_id"]].capacity,
-                        "observed_waitlist_count_before": counts_before.get(event["course_id"], 0),
+                        "observed_capacity": observed_capacity,
+                        "observed_waitlist_count_before": observed_waitlist,
                         "previous_selected": str(event["previous_selected"]).lower(),
                         "new_selected": str(event["new_selected"]).lower(),
                         "previous_bid": event["previous_bid"],
@@ -420,9 +564,10 @@ def main() -> None:
                     "student_private_context": private_context,
                     "state_snapshot": snapshot,
                     "raw_model_output": raw_output,
-                    "parsed_output": raw_output if validation.valid else None,
-                    "validation_result": {"valid": validation.valid, "error": validation.error},
+                    "parsed_output": raw_output if applied else None,
+                    "validation_result": {"valid": applied, "error": "" if applied else validation.error},
                     "final_output": final_source,
+                    "attempts": attempts,
                 }
             )
 
@@ -591,6 +736,10 @@ def main() -> None:
         "invalid_bid_count": invalid_bid_count,
         "over_budget_count": over_budget_count,
         "constraint_violation_rejected_count": constraint_violation_rejected_count,
+        "first_attempt_failure_count": first_attempt_failure_count,
+        "retry_attempt_count": retry_attempt_count,
+        "retry_success_count": retry_success_count,
+        "fallback_keep_previous_count": fallback_keep_previous_count,
         "behavior_tag_counts": count_behavior_tags(bid_events),
     }
     (output_root / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")

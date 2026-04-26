@@ -21,6 +21,7 @@ outputs/runs/<run_id>/
 - `decision_order` 是该学生在当前时间点内的调用顺序。
 - `observed_waitlist_count_before` 是学生决策前看到的待选人数。
 - `previous_bid` 和 `new_bid` 必须是非负整数。
+- `action_type=fallback_keep_previous` 表示 LLM 第一次输出和重试输出都未通过校验，本次决策保持上一状态。
 - `behavior_tags` 是用 `|` 连接的事后行为标签，可以为空。
 - `bid_events.csv` 是过程日志，不直接用于开奖。
 

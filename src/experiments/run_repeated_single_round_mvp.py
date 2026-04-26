@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--experiment-group", default="E0_llm_natural_baseline")
     parser.add_argument("--script-policy", default="utility_weighted")
     parser.add_argument("--n-repetitions", type=int, default=None)
+    parser.add_argument("--data-dir", default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -43,6 +44,8 @@ def main() -> None:
             "--seed-offset",
             str(repetition_index),
         ]
+        if args.data_dir:
+            command.extend(["--data-dir", args.data_dir])
         subprocess.run(command, check=True)
         metrics_path = output_root / run_id / "metrics.json"
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))

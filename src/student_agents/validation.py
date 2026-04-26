@@ -82,5 +82,5 @@ def validate_decision_output(
             "reason": str(item.get("reason", "")),
         }
     if total_bid > budget_limit:
-        return ValidationResult(False, "total bid exceeds budget"), {}
+        return ValidationResult(False, f"total bid {total_bid} exceeds budget {budget_limit}"), normalized
     return ValidationResult(True), normalized

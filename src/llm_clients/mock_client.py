@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from src.student_agents.context import split_time_slots
+
 
 class MockLLMClient:
     """Deterministic local stand-in for a student LLM."""
@@ -28,10 +30,22 @@ class MockLLMClient:
         candidates.sort(key=lambda item: item[0], reverse=True)
 
         selected_by_code: set[str] = set()
+        selected_time_slots: set[str] = set()
+        selected_credits = 0.0
+        credit_cap = float(private.get("credit_cap", 30))
         total_bid = 0
         bids = []
         for rank, (score, course, current, crowding) in enumerate(candidates):
-            wants_course = rank < 4 and score > 18 and course["course_code"] not in selected_by_code
+            course_slots = split_time_slots(str(course["time_slot"]))
+            no_time_conflict = not (selected_time_slots & course_slots)
+            within_credit_cap = selected_credits + float(course["credit"]) <= credit_cap
+            wants_course = (
+                rank < 4
+                and score > 18
+                and course["course_code"] not in selected_by_code
+                and no_time_conflict
+                and within_credit_cap
+            )
             bid = 0
             selected = False
             if wants_course:
@@ -42,6 +56,8 @@ class MockLLMClient:
                 bid = min(bid, budget - total_bid)
                 selected = True
                 selected_by_code.add(course["course_code"])
+                selected_time_slots.update(course_slots)
+                selected_credits += float(course["credit"])
                 total_bid += bid
             previous_bid = int(current["previous_bid"])
             previous_selected = bool(current["previous_selected"])
