@@ -226,6 +226,8 @@ $$
 
 保存聚合指标，例如平均效用、必修完成率、冲突违规数、预算消耗、公式组效用差等。应至少保留 `time_conflict_violation_count` 和 `infeasible_schedule_count`，避免把冲突课表当作有效高效用结果。
 
+MVP 还应记录 `interaction_mode`。当启用 tool-based 交互时，额外记录 `tool_call_count`、`tool_submit_rejected_count`、`tool_round_limit_count`。
+
 ### llm_traces.jsonl
 
-每行保存一个学生代理的一次大模型调用，包括输入、原始输出、校验结果和修正记录。
+每行保存一个学生代理的一次大模型调用，包括输入、原始输出、校验结果和修正记录。tool-based 模式下，`attempts` 保存每轮 tool request 和 tool result。

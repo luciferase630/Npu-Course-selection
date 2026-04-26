@@ -104,6 +104,12 @@ python -m src.experiments.run_single_round_mvp --config configs/simple_model.yam
 python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_mock --agent mock --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
 ```
 
+运行 tool-based 交互模式 mock 验证：
+
+```powershell
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_tool_mock --agent mock --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42 --interaction-mode tool_based
+```
+
 运行带单个脚本策略学生的对照实验：
 
 ```powershell

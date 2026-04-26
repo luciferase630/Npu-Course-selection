@@ -77,6 +77,95 @@ class OpenAICompatibleClient:
             raise RuntimeError("OpenAI-compatible response had empty content")
         return parse_json_object(content)
 
+    def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(session.initial_payload(), ensure_ascii=False)},
+        ]
+        trace = []
+        submit_rejected_count = 0
+        last_request = None
+        for round_index in range(1, max_rounds + 1):
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+            if not content:
+                tool_request = {"tool_name": "__parse_error__", "arguments": {}, "error": "empty content"}
+            else:
+                try:
+                    tool_request = parse_json_object(content)
+                except json.JSONDecodeError as exc:
+                    tool_request = {"tool_name": "__parse_error__", "arguments": {}, "error": str(exc)}
+            last_request = tool_request
+            tool_name = str(tool_request.get("tool_name", ""))
+            arguments = tool_request.get("arguments", {})
+            if not isinstance(arguments, dict):
+                arguments = {}
+            if not tool_name and "bids" in tool_request:
+                tool_name = "submit_bids"
+                arguments = {"bids": tool_request.get("bids", [])}
+            if tool_name == "__parse_error__":
+                tool_result = {"status": "error", "error": tool_request.get("error", "parse error")}
+            else:
+                tool_result = session.call_tool(tool_name, arguments)
+            if tool_name == "submit_bids" and tool_result.get("status") == "rejected":
+                submit_rejected_count += 1
+            trace.append(
+                {
+                    "round_index": round_index,
+                    "tool_request": tool_request,
+                    "tool_result": tool_result,
+                }
+            )
+            if tool_name == "submit_bids" and tool_result.get("status") == "accepted":
+                return {
+                    "accepted": True,
+                    "normalized_decision": tool_result["normalized_decision"],
+                    "tool_trace": trace,
+                    "tool_call_count": len(trace),
+                    "submit_rejected_count": submit_rejected_count,
+                    "round_limit_reached": False,
+                    "final_tool_request": last_request,
+                }
+            rounds_remaining = max_rounds - round_index
+            protocol_instruction = "Continue using tools only if needed; finish with submit_bids."
+            if tool_name == "check_schedule" and tool_result.get("feasible"):
+                protocol_instruction = "The checked proposal is feasible. Call submit_bids with the same bids now."
+            elif tool_name == "submit_bids" and tool_result.get("status") == "rejected":
+                protocol_instruction = "Fix the returned violations and call submit_bids again."
+            elif rounds_remaining <= 2:
+                protocol_instruction = (
+                    "You are near the round limit. Stop browsing. Call submit_bids next using the best feasible "
+                    "courses you already know."
+                )
+            messages.append({"role": "assistant", "content": json.dumps(tool_request, ensure_ascii=False)})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "tool_result": tool_result,
+                            "rounds_remaining": rounds_remaining,
+                            "protocol_instruction": protocol_instruction,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+        return {
+            "accepted": False,
+            "normalized_decision": {},
+            "tool_trace": trace,
+            "tool_call_count": len(trace),
+            "submit_rejected_count": submit_rejected_count,
+            "round_limit_reached": True,
+            "final_tool_request": last_request,
+            "error": f"tool interaction exceeded max_rounds={max_rounds}",
+        }
+
 
 def build_llm_client(agent: str):
     if agent == "mock":

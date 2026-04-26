@@ -47,6 +47,43 @@ def _add_to_attention_window(
         displayed_by_id.setdefault(course["course_id"], course)
 
 
+def build_course_conflict_summary(courses: list[dict]) -> dict:
+    by_code: dict[str, list[str]] = defaultdict(list)
+    by_slot: dict[str, list[str]] = defaultdict(list)
+    for course in courses:
+        by_code[str(course["course_code"])].append(str(course["course_id"]))
+        for slot in split_time_slots(str(course["time_slot"])):
+            by_slot[slot].append(str(course["course_id"]))
+    duplicate_code_groups = [
+        {
+            "course_code": code,
+            "course_ids": sorted(course_ids),
+            "rule": "select at most one course_id from this course_code",
+        }
+        for code, course_ids in sorted(by_code.items())
+        if len(course_ids) > 1
+    ]
+    time_slot_groups = [
+        {
+            "time_slot": slot,
+            "course_ids": sorted(course_ids),
+            "rule": "select at most one course_id from this time_slot group",
+        }
+        for slot, course_ids in sorted(by_slot.items())
+        if len(course_ids) > 1
+    ]
+    return {
+        "meaning": (
+            "Use this before submitting. If you select more than one course_id from any listed group, "
+            "the platform will reject the whole decision."
+        ),
+        "duplicate_course_code_groups": duplicate_code_groups,
+        "time_conflict_groups_by_slot": time_slot_groups,
+        "duplicate_course_code_group_count": len(duplicate_code_groups),
+        "time_conflict_group_count": len(time_slot_groups),
+    }
+
+
 def percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
@@ -204,6 +241,7 @@ def build_student_private_context(
         "bean_cost_lambda": state_dependent_lambda,
         "state_dependent_bean_cost_lambda": state_dependent_lambda,
         "available_course_sections": available_courses,
+        "displayed_course_conflict_summary": build_course_conflict_summary(available_courses),
         "catalog_visibility_summary": {
             "total_eligible_course_sections": len(all_available_courses),
             "displayed_course_sections": len(available_courses),
@@ -292,8 +330,23 @@ def build_interaction_payload(
                 "selected courses must not repeat the same course_code",
                 "only submit bids for displayed available_course_sections",
             ],
+            "conflict_summary_usage": (
+                "Before submitting, build your selected course_id set. For every group in "
+                "selected_course_conflict_summary.duplicate_course_code_groups and "
+                "selected_course_conflict_summary.time_conflict_groups_by_slot, the intersection with your selected "
+                "set must contain at most one course_id."
+            ),
         },
         "catalog_visibility_summary": private_context.get("catalog_visibility_summary", {}),
+        "selected_course_conflict_summary": private_context.get("displayed_course_conflict_summary", {}),
+        "decision_safety_protocol": [
+            "Choose selected course_ids.",
+            "Check total selected bid <= budget_initial.",
+            "Check total selected credits <= credit_cap.",
+            "For each duplicate_course_code group, keep at most one selected course_id.",
+            "For each time_conflict group, keep at most one selected course_id.",
+            "Only then produce the final JSON.",
+        ],
         "student_private_context": private_context,
         "state_snapshot": state_snapshot,
         "output_schema": {

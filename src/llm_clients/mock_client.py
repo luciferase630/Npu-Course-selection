@@ -87,3 +87,62 @@ class MockLLMClient:
             "bids": bids,
             "overall_reasoning": "Mock client balances utility, derived requirement pressure, crowding, and budget.",
         }
+
+    def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
+        trace = []
+
+        def call(tool_name: str, arguments: dict | None = None) -> dict:
+            result = session.call_tool(tool_name, arguments or {})
+            trace.append({"round_index": len(trace) + 1, "tool_request": {"tool_name": tool_name, "arguments": arguments or {}}, "tool_result": result})
+            return result
+
+        call("get_current_status")
+        required = call("list_required_sections", {"max_sections_per_requirement": 2})
+        top_courses = call("search_courses", {"sort_by": "utility", "max_results": 20})
+
+        candidate_ids = []
+        for requirement in required.get("requirements", []):
+            for section in requirement.get("sections", []):
+                candidate_ids.append(section["course_id"])
+        for course in top_courses.get("courses", []):
+            candidate_ids.append(course["course_id"])
+
+        selected: list[str] = []
+        for course_id in candidate_ids:
+            if course_id in selected:
+                continue
+            proposal = selected + [course_id]
+            check = session.call_tool("check_schedule", {"proposed_course_ids": proposal})
+            if check.get("feasible"):
+                selected = proposal
+            if len(selected) >= 4:
+                break
+
+        if not selected:
+            submit = call("submit_bids", {"bids": []})
+        else:
+            details = [session.call_tool("get_course_details", {"course_id": course_id}) for course_id in selected]
+            weights = [max(1.0, float(item.get("course", {}).get("utility", 1))) for item in details]
+            total_weight = sum(weights)
+            budget = session.student.budget_initial
+            bids = []
+            spent = 0
+            for index, (course_id, weight) in enumerate(zip(selected, weights)):
+                bid = int(budget * weight / total_weight)
+                if index == len(selected) - 1:
+                    bid = budget - spent
+                spent += bid
+                bids.append({"course_id": course_id, "bid": bid})
+            call("check_schedule", {"bids": bids})
+            submit = call("submit_bids", {"bids": bids})
+
+        return {
+            "accepted": submit.get("status") == "accepted",
+            "normalized_decision": submit.get("normalized_decision", {}),
+            "tool_trace": trace,
+            "tool_call_count": len(trace),
+            "submit_rejected_count": 1 if submit.get("status") == "rejected" else 0,
+            "round_limit_reached": len(trace) > max_rounds,
+            "final_tool_request": trace[-1]["tool_request"] if trace else None,
+            "error": "" if submit.get("status") == "accepted" else submit.get("error", "mock tool submit failed"),
+        }

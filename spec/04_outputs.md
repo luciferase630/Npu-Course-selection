@@ -114,6 +114,8 @@ $$
 - `parsed_output`
 - `validation_result`
 - `final_output`
+- `interaction_mode`
+- `attempts`：在 `single_shot` 中记录重试；在 `tool_based` 中记录每轮 tool request 和 tool result。
 
 要求：
 
@@ -128,6 +130,7 @@ $$
 ```json
 {
   "run_id": "...",
+  "interaction_mode": "single_shot",
   "n_students": 30,
   "n_courses": 100,
   "time_points": 5,
@@ -142,6 +145,9 @@ $$
   "invalid_bid_count": 0,
   "over_budget_count": 0,
   "constraint_violation_rejected_count": 0,
+  "tool_call_count": 0,
+  "tool_submit_rejected_count": 0,
+  "tool_round_limit_count": 0,
   "scripted_agent_count": 0,
   "scripted_agent_utility_gap": "",
   "behavior_tag_counts": {}

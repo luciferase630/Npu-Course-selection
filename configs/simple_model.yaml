@@ -118,10 +118,13 @@ agent_design:
     - scripted_policy
 
 llm_context:
+  interaction_mode: single_shot
   max_displayed_course_sections: 40
-  max_retries_on_invalid_output: 1
+  max_retries_on_invalid_output: 2
+  max_tool_rounds: 10
   display_policy: attention_window_required_sections_then_high_utility
   filtered_courses_remain_eligible: true
+  tool_system_prompt: prompts/tool_based_system_prompt.md
 
 formula_parameters:
   formula_multiplier_name: rho

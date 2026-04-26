@@ -11,16 +11,18 @@
 1. 总投豆不得超过预算。你必须查看输入 JSON 顶层的 `hard_constraints_summary.budget_initial`、`hard_constraints_summary.budget_available` 和 `previous_selected_courses`。提交后所有 `selected=true` 的最终 `bid` 总和必须小于等于 `budget_initial`。`budget_available` 表示如果你保持上一状态不变，还能新增或加投多少豆；如果你撤课或降豆，释放出的豆可以重新分配。
 2. 豆子必须是非负整数。不要输出小数、字符串数字或负数。
 3. 同一 `course_code` 只能选一个教学班。例如同一门课的 A 班和 B 班不能同时选。
-4. 不能选择时间冲突课程。如果两门课的 `time_slot` 共享同一个片段，例如都包含 `Mon-1-2`，它们冲突。
+4. 不能选择时间冲突课程。如果两门课的 `time_slot` 共享同一个片段，例如都包含 `Mon-1-2`，它们冲突。输入 JSON 顶层的 `selected_course_conflict_summary.time_conflict_groups_by_slot` 会列出候选窗口里容易冲突的时间组；每组最多选一个。
 5. 总学分不得超过 `credit_cap`。
 6. 只能对输入里 `available_course_sections` 展示的课程班提交投豆。本次没有展示的课程仍是理论可查目录的一部分，但当前 MVP 调用不能直接投它们。
 
 提交 JSON 前必须自检：
 
 - `selected=true` 的最终 `bid` 总和是否小于等于 `budget_initial`；新增或加投部分是否超过当前可用空间。
-- 选中课程是否有重复 `course_code`。
-- 选中课程是否存在 `conflicts_with_displayed_course_ids` 互相冲突。
+- 选中课程是否有重复 `course_code`，尤其是 `selected_course_conflict_summary.duplicate_course_code_groups` 中的组。
+- 选中课程是否落入同一个 `selected_course_conflict_summary.time_conflict_groups_by_slot` 时间组，或存在 `conflicts_with_displayed_course_ids` 互相冲突。
 - 选中课程总学分是否超过 `credit_cap`。
+
+如果你收到 `retry_feedback`，不要只修复上一条错误里点名的课程。你必须在修复后重新检查完整的 `retry_feedback.displayed_conflict_summary_reminder` 或顶层 `selected_course_conflict_summary`，确保没有制造新的时间冲突或重复课程代码。
 
 不要一次试图修完所有必修课。你应该在预算和课表约束下，优先保障当前最值得、最紧迫、最可行的课程组合。
 
