@@ -16,10 +16,57 @@ repeated_experiments:
 objective:
   type: expected_utility_maximization
   utility_source: data/synthetic/student_course_utility_edges.csv
-  primary_utility_field: total_utility
+  primary_utility_field: utility
+  requirements_source: data/synthetic/student_course_code_requirements.csv
+  course_metadata_source: data/synthetic/courses.csv
   include_missing_required_penalty: true
+  missing_required_penalty_source: derived_from_requirement_penalty_model
   include_bean_cost: true
-  include_risk_penalty: false
+  default_bean_cost_lambda: 1
+  bean_cost_lambda_interpretation: opportunity_cost_shadow_price
+  bean_cost_lambda_default_scope: valid_only_after_utility_scale_normalization
+  bean_cost_lambda_calibration_method: normalize_utility_to_bean_unit_for_mvp
+  state_dependent_lambda:
+    enabled: true
+    formula: base_lambda * risk_multiplier * grade_multiplier * requirement_pressure_multiplier * budget_multiplier
+    risk_multipliers:
+      conservative: 1.15
+      balanced: 1.0
+      aggressive: 0.9
+    grade_multipliers:
+      freshman: 0.9
+      sophomore: 0.95
+      junior: 1.1
+      senior: 1.35
+      graduation_term: 1.8
+    requirement_pressure_budget_divisor: 4.0
+    requirement_pressure_cap: 1.0
+    low_budget_threshold_ratio: 0.35
+    state_fields:
+      - grade_stage
+      - risk_type
+      - derived_missing_required_penalty
+      - remaining_budget
+
+requirement_penalty_model:
+  source: derived_not_hand_entered_per_row
+  scale_assumption: same_unit_as_utility
+  calibration_method: utility_distribution_and_budget_shadow_price
+  base_by_requirement_type:
+    required: utility_p95_plus_full_budget_opportunity_cost
+    strong_elective_requirement: utility_p75
+    optional_target: utility_p50_half
+  weight_by_requirement_priority:
+    degree_blocking: high_urgency_multiplier
+    progress_blocking: medium_high_urgency_multiplier
+    normal: neutral_multiplier
+    low: low_urgency_multiplier
+  priority_weights:
+    degree_blocking: 1.5
+    progress_blocking: 1.2
+    normal: 1.0
+    low: 0.5
+  require_sensitivity_analysis: true
 
 information:
   show_capacity: true
@@ -142,9 +189,9 @@ behavior_tags:
     - overbid_low_utility
 
 constraints:
-  enforce_course_code_unique: false
-  enforce_time_conflict: false
-  enforce_total_credit_cap: false
+  enforce_course_code_unique: true
+  enforce_time_conflict: true
+  enforce_total_credit_cap: true
   enforce_category_credit_cap: false
   schedule_feasibility:
     enabled_in_first_stage: false

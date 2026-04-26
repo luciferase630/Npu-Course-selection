@@ -37,7 +37,7 @@ $$
 U_i(E_i)=
 \sum_{c\in E_i}u_{ic}
 -\sum_{k\in Req_i}\mu_{ik}\mathbf{1}\{\nexists c\in E_i:code(c)=k\}
--\lambda_iP_i
+-\lambda_i(\mathbf{s}_i)P_i
 -\gamma_iRisk_i
 $$
 
@@ -46,7 +46,7 @@ $$
 - $u_{ic}$ 是学生 $i$ 对课程班 $c$ 的先验主观价值。
 - $Req_i$ 是学生当前阶段需要完成的课程代码集合。
 - $\mu_{ik}$ 是课程代码 $k$ 未完成时的惩罚。
-- $\lambda_i$ 表示学生对豆子消耗的敏感度。
+- $\lambda_i(\mathbf{s}_i)$ 表示学生在当前状态下对豆子消耗的影子价格，状态 $\mathbf{s}_i$ 可以包含年级、风险偏好、未完成要求压力、剩余预算等。
 - $\gamma_iRisk_i$ 表示风险成本，例如必修失败风险、过度押注风险等。
 
 这里最重要的修正是：必修课的重要性不只靠“给必修课固定高分”表达，而是主要通过“未完成惩罚”表达。这样才能同时允许某些选修课因为学生个人偏好而具有很高价值。
@@ -90,7 +90,7 @@ $$
 u_{ic}\ne u_{id}
 $$
 
-现实中，同一门课程由不同老师上、不同时间上，学生的选择意愿会差很多。因此后续数据表应以 `student_course_utility_edges.csv` 为核心，记录每个学生对每个可选课程班的效用分量。
+现实中，同一门课程由不同老师上、不同时间上，学生的选择意愿会差很多。因此后续数据表应以 `student_course_utility_edges.csv` 为核心，记录每个学生对每个可选课程班的单个 `utility` 数值。这个数值是邻接矩阵上的边权，表示主观喜爱程度；它不承载学分、必修未完成惩罚、时间冲突等其他模型参数。
 
 ## 5. 简化模型：单轮 all-pay auction
 
@@ -246,10 +246,10 @@ $$
 如果从“多投1个豆是否值得”的角度看，学生应比较：
 
 $$
-\Delta(b)=u_{ic}[p_{ic}(b+1)-p_{ic}(b)]-\lambda_i
+\Delta(b)=u_{ic}[p_{ic}(b+1)-p_{ic}(b)]-\lambda_i(\mathbf{s}_i)
 $$
 
-这说明最优投豆至少与 $u_{ic}$、录取概率函数 $p_{ic}(b)$ 和豆子成本 $\lambda_i$ 有关。不同学生面对同一门课，即使 $m,n$ 一样，也可能因为 $u_{ic}$ 不同而投出不同豆子。
+这说明最优投豆至少与 $u_{ic}$、录取概率函数 $p_{ic}(b)$ 和状态依赖豆子成本 $\lambda_i(\mathbf{s}_i)$ 有关。不同学生面对同一门课，即使 $m,n$ 一样，也可能因为 $u_{ic}$ 或自身状态不同而投出不同豆子。
 
 因此，公式更可能是：
 
@@ -291,7 +291,8 @@ $$
 
 - 学生表：学院、年级、初始预算、学分上限、风险类型、是否知道公式。
 - 课程班表：课程代码、课程班编号、老师、容量、时间、类别、学分、开放轮次。
-- 学生-课程班效用边表：每个学生对每个课程班的效用分量和总效用。
+- 学生-课程班效用边表：每个学生对每个课程班的单个 `utility` 边权。
+- 学生-课程代码要求表：记录课程代码要求事实，再由统一规则派生未完成惩罚。
 - 轮次配置：开放规则、退豆规则、时间点数量、随机种子。
 - 投豆事件表：记录轮内每次修改投豆时的可见容量、待选人数、旧投豆、新投豆和理由。
 
@@ -300,7 +301,8 @@ $$
 - 当前预算。
 - 已选课程。
 - 可选课程班。
-- 每门课的效用分量。
+- 每门课的 `utility`、课程元数据和派生出的课程代码未完成惩罚。
+- 当前状态下的 `state_dependent_bean_cost_lambda`。
 - 当前容量和待选人数。
 - 距离截止还有多久。
 - 上一次自己的投豆。
@@ -417,3 +419,23 @@ $$
 这也提醒我：第一阶段单轮 all-pay 实验如果暂时不启用完整课表约束，必须记录 `time_conflict_violation_count`，不能把时间冲突课表当成有效方案。
 
 公式修正也要同步：学长公式中真正被学生手动选择并可能形成共同信号的是 $\rho=1+\alpha$ 这个倍率，不是 $\alpha$ 本身。后续记录公式信号时应优先记录 `formula_multiplier_rho`，必要时再记录 `alpha_offset`。
+
+## 16. MVP 实验与状态依赖成本口径对齐
+
+另一个重要修正是：豆子的成本不应被理解成一个对所有学生固定不变的拍脑袋常数。更准确的写法是：
+
+$$
+\lambda_i(\mathbf{s}_i)
+$$
+
+其中 $\mathbf{s}_i$ 是学生状态。当前 MVP 实验已经把这个思路落成可执行字段 `state_dependent_bean_cost_lambda`。
+
+当前对齐关系如下：
+
+- `student_course_utility_edges.csv` 中的 `utility` 对应 $u_{ic}$，只表示学生对教学班的主观喜爱。
+- `student_course_code_requirements.csv` 记录课程代码要求事实，不直接手填 $\mu_{ik}$。
+- `requirement_penalty_model` 根据要求类型、要求优先级、`utility` 分布和预算标尺派生 `derived_missing_required_penalty`，对应 $\mu_{ik}$。
+- `students.csv` 中的 `bean_cost_lambda` 只是基础影子价格；运行时再根据 `grade_stage`、`risk_type`、要求压力和剩余预算派生 `state_dependent_bean_cost_lambda`。
+- `utilities.csv` 输出 `gross_liking_utility`、`unmet_required_penalty`、`beans_cost` 和 `net_total_utility`，因此可以分开观察“喜欢这门课”“没完成的后果”和“豆子机会成本”。
+
+所以，当前实验与 `docs/00_problem_definition_simple.md` 的新口径基本对得上：$u_{ic}$、$\mu_{ik}$、$\lambda_i(\mathbf{s}_i)$ 三者同时存在。需要注意的是，MVP 里的派生函数只是第一版代理规则，不是已经证明出来的最优经济学模型。后续应通过多次实验、敏感性分析和回测来校准这套规则。

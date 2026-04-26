@@ -1,0 +1,604 @@
+from __future__ import annotations
+
+import argparse
+import json
+import random
+from pathlib import Path
+
+from src.auction_mechanism.allocation import allocate_courses, compute_all_pay_budgets
+from src.data_generation.io import (
+    load_config,
+    load_courses,
+    load_requirements,
+    load_students,
+    load_utility_edges,
+    resolve_data_paths,
+    validate_dataset,
+    write_csv_rows,
+)
+from src.llm_clients.openai_client import build_llm_client
+from src.models import BidState, Course
+from src.student_agents.behavior_tags import count_behavior_tags, derive_behavior_tags
+from src.student_agents.context import (
+    build_interaction_payload,
+    build_state_snapshot,
+    build_student_private_context,
+    derive_requirement_penalties,
+    derive_state_dependent_lambda,
+    group_requirements_by_student,
+)
+from src.student_agents.scripted_policies import run_scripted_policy
+from src.student_agents.validation import validate_decision_output
+
+
+def load_system_prompt(config: dict) -> str:
+    prompt_path = Path(config.get("agent_design", {}).get("system_prompt", "prompts/single_round_all_pay_system_prompt.md"))
+    return prompt_path.read_text(encoding="utf-8")
+
+
+def time_slots_overlap(left: str, right: str) -> bool:
+    left_slots = {slot.strip() for slot in left.split("|") if slot.strip()}
+    right_slots = {slot.strip() for slot in right.split("|") if slot.strip()}
+    return bool(left_slots & right_slots)
+
+
+def build_current_waitlist_counts(state: dict[tuple[str, str], BidState]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for (_student_id, course_id), bid_state in state.items():
+        if bid_state.selected:
+            counts[course_id] = counts.get(course_id, 0) + 1
+    return counts
+
+
+def previous_vector_for_student(
+    student_id: str,
+    course_ids: list[str],
+    state: dict[tuple[str, str], BidState],
+) -> dict[str, dict]:
+    return {
+        course_id: {
+            "selected": state[(student_id, course_id)].selected,
+            "bid": state[(student_id, course_id)].bid,
+        }
+        for course_id in course_ids
+    }
+
+
+def committed_bid_for_student(
+    student_id: str,
+    course_ids: list[str],
+    state: dict[tuple[str, str], BidState],
+) -> int:
+    return sum(state[(student_id, course_id)].bid for course_id in course_ids if state[(student_id, course_id)].selected)
+
+
+def select_scripted_students(
+    student_ids: list[str],
+    experiment_group: str,
+    seed: int,
+) -> set[str]:
+    if experiment_group == "E0_llm_natural_baseline":
+        return set()
+    rng = random.Random(seed + 17)
+    shuffled = student_ids[:]
+    rng.shuffle(shuffled)
+    if experiment_group == "E1_one_scripted_policy_agent":
+        return set(shuffled[:1])
+    if experiment_group == "E2_10pct_scripted_policy_agents":
+        count = max(1, round(0.1 * len(student_ids)))
+        return set(shuffled[:count])
+    raise ValueError(f"Experiment group {experiment_group} is not implemented in MVP")
+
+
+def check_schedule_constraints(
+    student_id: str,
+    merged: dict[str, dict],
+    courses: dict[str, Course],
+    credit_cap: float,
+    constraints_config: dict,
+) -> str:
+    selected_course_ids = [course_id for course_id, item in merged.items() if item["selected"]]
+    if constraints_config.get("enforce_course_code_unique", False):
+        codes = [courses[course_id].course_code for course_id in selected_course_ids]
+        if len(codes) != len(set(codes)):
+            return f"student {student_id} selected duplicate course_code"
+    if constraints_config.get("enforce_time_conflict", False):
+        for index, left in enumerate(selected_course_ids):
+            for right in selected_course_ids[index + 1 :]:
+                if time_slots_overlap(courses[left].time_slot, courses[right].time_slot):
+                    return f"student {student_id} selected time-conflicting courses {left} and {right}"
+    if constraints_config.get("enforce_total_credit_cap", False):
+        credits = sum(courses[course_id].credit for course_id in selected_course_ids)
+        if credits > credit_cap:
+            return f"student {student_id} selected credits {credits} above cap {credit_cap}"
+    return ""
+
+
+def apply_decision(
+    student_id: str,
+    available_course_ids: list[str],
+    state: dict[tuple[str, str], BidState],
+    normalized_decision: dict[str, dict],
+    budget: int,
+    courses: dict[str, Course],
+    credit_cap: float,
+    constraints_config: dict,
+) -> tuple[bool, str, list[dict]]:
+    merged = {
+        course_id: {
+            "selected": state[(student_id, course_id)].selected,
+            "bid": state[(student_id, course_id)].bid,
+            "action_type": "keep",
+            "reason": "",
+        }
+        for course_id in available_course_ids
+    }
+    for course_id, item in normalized_decision.items():
+        merged[course_id] = item
+    total_bid = sum(int(item["bid"]) for item in merged.values() if item["selected"])
+    if total_bid > budget:
+        return False, "merged decision exceeds budget", []
+    constraint_error = check_schedule_constraints(student_id, merged, courses, credit_cap, constraints_config)
+    if constraint_error:
+        return False, constraint_error, []
+
+    events = []
+    for course_id in available_course_ids:
+        before = state[(student_id, course_id)]
+        after = merged[course_id]
+        events.append(
+            {
+                "course_id": course_id,
+                "previous_selected": before.selected,
+                "new_selected": bool(after["selected"]),
+                "previous_bid": before.bid,
+                "new_bid": int(after["bid"]),
+                "action_type": after.get("action_type", "keep"),
+                "reason": after.get("reason", ""),
+            }
+        )
+        before.selected = bool(after["selected"])
+        before.bid = int(after["bid"])
+    return True, "", events
+
+
+def final_decisions_from_state(
+    state: dict[tuple[str, str], BidState],
+    available_by_student: dict[str, list[str]],
+) -> dict[tuple[str, str], dict]:
+    return {
+        (student_id, course_id): {
+            "selected": state[(student_id, course_id)].selected,
+            "bid": state[(student_id, course_id)].bid,
+        }
+        for student_id, course_ids in available_by_student.items()
+        for course_id in course_ids
+    }
+
+
+def compute_utilities(
+    run_id: str,
+    students: dict,
+    courses: dict[str, Course],
+    edges: dict,
+    requirements_by_student: dict,
+    derived_penalties: dict,
+    lambda_by_student: dict[str, float],
+    allocations: list,
+    budget_rows: list[dict],
+) -> list[dict]:
+    admitted_by_student: dict[str, list[str]] = {student_id: [] for student_id in students}
+    for allocation in allocations:
+        if allocation.admitted:
+            admitted_by_student.setdefault(allocation.student_id, []).append(allocation.course_id)
+    budget_by_student = {row["student_id"]: row for row in budget_rows}
+    rows = []
+    for student_id, student in students.items():
+        admitted_courses = admitted_by_student.get(student_id, [])
+        completed_codes = {courses[course_id].course_code for course_id in admitted_courses}
+        gross = sum(edges[(student_id, course_id)].utility for course_id in admitted_courses)
+        unmet_penalty = 0.0
+        for requirement in requirements_by_student.get(student_id, []):
+            if requirement.course_code not in completed_codes:
+                unmet_penalty += derived_penalties.get((student_id, requirement.course_code), 0.0)
+        credits = sum(courses[course_id].credit for course_id in admitted_courses)
+        credit_cap_violation_count = 1 if credits > student.credit_cap else 0
+        time_conflict_count = 0
+        for index, left in enumerate(admitted_courses):
+            for right in admitted_courses[index + 1 :]:
+                if time_slots_overlap(courses[left].time_slot, courses[right].time_slot):
+                    time_conflict_count += 1
+        code_dup_count = len(admitted_courses) - len(completed_codes)
+        feasible = credit_cap_violation_count == 0 and time_conflict_count == 0 and code_dup_count == 0
+        beans_paid = int(budget_by_student[student_id]["beans_paid"])
+        state_lambda = lambda_by_student[student_id]
+        beans_cost = state_lambda * beans_paid
+        net = gross - unmet_penalty - beans_cost
+        rows.append(
+            {
+                "run_id": run_id,
+                "student_id": student_id,
+                "gross_liking_utility": round(gross, 4),
+                "state_dependent_bean_cost_lambda": round(state_lambda, 4),
+                "beans_cost": round(beans_cost, 4),
+                "unmet_required_penalty": round(unmet_penalty, 4),
+                "credits_selected": round(credits, 4),
+                "credit_cap_violation_count": credit_cap_violation_count,
+                "time_conflict_violation_count": time_conflict_count,
+                "feasible_schedule_flag": str(feasible).lower(),
+                "net_total_utility": round(net, 4),
+                "utility_per_bean": round(net / beans_paid, 4) if beans_paid else round(net, 4),
+            }
+        )
+    return rows
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run single-round all-pay MVP experiment.")
+    parser.add_argument("--config", default="configs/simple_model.yaml")
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--agent", default="mock", choices=["mock", "openai"])
+    parser.add_argument("--experiment-group", default="E0_llm_natural_baseline")
+    parser.add_argument("--script-policy", default="utility_weighted")
+    parser.add_argument("--seed-offset", type=int, default=0)
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    paths = resolve_data_paths(config)
+    students = load_students(paths["students"])
+    courses = load_courses(paths["courses"])
+    edges = load_utility_edges(paths["utility_edges"])
+    requirements = load_requirements(paths["requirements"])
+    validate_dataset(students, courses, edges, requirements)
+
+    seed = int(config.get("random_seed", 20260425)) + args.seed_offset
+    time_points = int(config.get("intra_round_dynamics", {}).get("time_points_per_round", 5))
+    output_root = Path(config.get("outputs", {}).get("run_root", "outputs/runs")) / args.run_id
+    output_root.mkdir(parents=True, exist_ok=True)
+    system_prompt = load_system_prompt(config)
+    try:
+        llm_client = build_llm_client(args.agent)
+    except RuntimeError as exc:
+        raise SystemExit(f"LLM client setup failed: {exc}") from None
+
+    requirements_by_student = group_requirements_by_student(requirements)
+    derived_penalties = derive_requirement_penalties(students, edges, requirements, config)
+    student_ids = sorted(students)
+    try:
+        scripted_students = select_scripted_students(student_ids, args.experiment_group, seed)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    agent_type_by_student = {
+        student_id: ("scripted_policy" if student_id in scripted_students else args.agent) for student_id in student_ids
+    }
+    available_by_student = {
+        student_id: sorted(course_id for (sid, course_id), edge in edges.items() if sid == student_id and edge.eligible)
+        for student_id in student_ids
+    }
+    state = {
+        (student_id, course_id): BidState()
+        for student_id in student_ids
+        for course_id in available_by_student[student_id]
+    }
+
+    bid_events: list[dict] = []
+    traces: list[dict] = []
+    json_failure_count = 0
+    invalid_bid_count = 0
+    over_budget_count = 0
+    constraint_violation_rejected_count = 0
+
+    for time_point in range(1, time_points + 1):
+        order = student_ids[:]
+        random.Random(seed + time_point).shuffle(order)
+        for decision_order, student_id in enumerate(order, start=1):
+            student = students[student_id]
+            available_course_ids = available_by_student[student_id]
+            current_counts = build_current_waitlist_counts(state)
+            previous_vector = previous_vector_for_student(student_id, available_course_ids, state)
+            budget_committed_previous = committed_bid_for_student(student_id, available_course_ids, state)
+            budget_available = student.budget_initial - budget_committed_previous
+            state_lambda = derive_state_dependent_lambda(
+                student,
+                requirements_by_student.get(student_id, []),
+                derived_penalties,
+                remaining_budget=budget_available,
+                config=config,
+            )
+            private_context = build_student_private_context(
+                student,
+                {course_id: courses[course_id] for course_id in available_course_ids},
+                edges,
+                requirements_by_student.get(student_id, []),
+                derived_penalties,
+                state_lambda,
+            )
+            snapshot = build_state_snapshot(
+                args.run_id,
+                time_point,
+                time_points,
+                student,
+                {course_id: courses[course_id] for course_id in available_course_ids},
+                current_counts,
+                previous_vector,
+                budget_committed_previous,
+                budget_available,
+            )
+            payload = build_interaction_payload(private_context, snapshot)
+            raw_output = None
+            agent_type = agent_type_by_student[student_id]
+            final_source = agent_type
+            try:
+                if agent_type == "scripted_policy":
+                    raw_output = run_scripted_policy(args.script_policy, private_context, snapshot)
+                else:
+                    raw_output = llm_client.complete(system_prompt, payload)
+                validation, normalized = validate_decision_output(
+                    raw_output,
+                    student_id,
+                    time_point,
+                    set(available_course_ids),
+                    student.budget_initial,
+                )
+            except json.JSONDecodeError as exc:
+                validation, normalized = validate_decision_output({}, student_id, time_point, set(), 0)
+                validation = type(validation)(False, f"json decode failed: {exc}")
+                json_failure_count += 1
+            except Exception as exc:
+                validation, normalized = validate_decision_output({}, student_id, time_point, set(), 0)
+                validation = type(validation)(False, str(exc))
+                json_failure_count += 1
+
+            if validation.valid:
+                applied, apply_error, events = apply_decision(
+                    student_id,
+                    available_course_ids,
+                    state,
+                    normalized,
+                    student.budget_initial,
+                    courses,
+                    student.credit_cap,
+                    config.get("constraints", {}),
+                )
+                if not applied:
+                    validation = type(validation)(False, apply_error)
+                    if "budget" in apply_error:
+                        over_budget_count += 1
+                    else:
+                        constraint_violation_rejected_count += 1
+                    final_source = "fallback_keep_previous"
+                    events = []
+            else:
+                invalid_bid_count += 1
+                final_source = "fallback_keep_previous"
+                events = []
+
+            counts_before = current_counts
+            for event in events:
+                event_tags = derive_behavior_tags(
+                    time_point=time_point,
+                    time_points_total=time_points,
+                    observed_capacity=courses[event["course_id"]].capacity,
+                    observed_waitlist_count_before=counts_before.get(event["course_id"], 0),
+                    previous_selected=event["previous_selected"],
+                    new_selected=event["new_selected"],
+                    previous_bid=event["previous_bid"],
+                    new_bid=event["new_bid"],
+                    utility=edges[(student_id, event["course_id"])].utility,
+                )
+                bid_events.append(
+                    {
+                        "run_id": args.run_id,
+                        "experiment_group": args.experiment_group,
+                        "time_point": time_point,
+                        "decision_order": decision_order,
+                        "student_id": student_id,
+                        "course_id": event["course_id"],
+                        "agent_type": agent_type,
+                        "script_policy_name": args.script_policy if agent_type == "scripted_policy" else "",
+                        "observed_capacity": courses[event["course_id"]].capacity,
+                        "observed_waitlist_count_before": counts_before.get(event["course_id"], 0),
+                        "previous_selected": str(event["previous_selected"]).lower(),
+                        "new_selected": str(event["new_selected"]).lower(),
+                        "previous_bid": event["previous_bid"],
+                        "new_bid": event["new_bid"],
+                        "action_type": event["action_type"],
+                        "behavior_tags": "|".join(event_tags),
+                        "reason": event["reason"],
+                    }
+                )
+            traces.append(
+                {
+                    "run_id": args.run_id,
+                    "experiment_group": args.experiment_group,
+                    "time_point": time_point,
+                    "decision_order": decision_order,
+                    "student_id": student_id,
+                    "agent_type": agent_type,
+                    "script_policy_name": args.script_policy if agent_type == "scripted_policy" else "",
+                    "system_prompt": system_prompt,
+                    "student_private_context": private_context,
+                    "state_snapshot": snapshot,
+                    "raw_model_output": raw_output,
+                    "parsed_output": raw_output if validation.valid else None,
+                    "validation_result": {"valid": validation.valid, "error": validation.error},
+                    "final_output": final_source,
+                }
+            )
+
+    final_decisions = final_decisions_from_state(state, available_by_student)
+    allocations = allocate_courses(courses, final_decisions, seed + 999)
+    budget_rows = compute_all_pay_budgets(
+        student_ids,
+        {student_id: students[student_id].budget_initial for student_id in student_ids},
+        final_decisions,
+    )
+    budget_by_student = {row["student_id"]: row for row in budget_rows}
+    final_lambda_by_student = {
+        student_id: derive_state_dependent_lambda(
+            students[student_id],
+            requirements_by_student.get(student_id, []),
+            derived_penalties,
+            remaining_budget=int(budget_by_student[student_id]["budget_end"]),
+            config=config,
+        )
+        for student_id in student_ids
+    }
+    utilities = compute_utilities(
+        args.run_id,
+        students,
+        courses,
+        edges,
+        requirements_by_student,
+        derived_penalties,
+        final_lambda_by_student,
+        allocations,
+        budget_rows,
+    )
+
+    final_counts = build_current_waitlist_counts(state)
+    write_csv_rows(
+        output_root / "bid_events.csv",
+        [
+            "run_id",
+            "experiment_group",
+            "time_point",
+            "decision_order",
+            "student_id",
+            "course_id",
+            "agent_type",
+            "script_policy_name",
+            "observed_capacity",
+            "observed_waitlist_count_before",
+            "previous_selected",
+            "new_selected",
+            "previous_bid",
+            "new_bid",
+            "action_type",
+            "behavior_tags",
+            "reason",
+        ],
+        bid_events,
+    )
+    decision_rows = [
+        {
+            "run_id": args.run_id,
+            "experiment_group": args.experiment_group,
+            "student_id": student_id,
+            "course_id": course_id,
+            "agent_type": agent_type_by_student[student_id],
+            "script_policy_name": args.script_policy if agent_type_by_student[student_id] == "scripted_policy" else "",
+            "selected": str(decision["selected"]).lower(),
+            "bid": decision["bid"],
+            "observed_capacity": courses[course_id].capacity,
+            "observed_waitlist_count_final": final_counts.get(course_id, 0),
+        }
+        for (student_id, course_id), decision in sorted(final_decisions.items())
+    ]
+    write_csv_rows(
+        output_root / "decisions.csv",
+        [
+            "run_id",
+            "experiment_group",
+            "student_id",
+            "course_id",
+            "agent_type",
+            "script_policy_name",
+            "selected",
+            "bid",
+            "observed_capacity",
+            "observed_waitlist_count_final",
+        ],
+        decision_rows,
+    )
+    write_csv_rows(
+        output_root / "allocations.csv",
+        ["run_id", "experiment_group", "course_id", "student_id", "bid", "admitted", "cutoff_bid", "tie_break_used"],
+        [
+            {
+                "run_id": args.run_id,
+                "experiment_group": args.experiment_group,
+                "course_id": item.course_id,
+                "student_id": item.student_id,
+                "bid": item.bid,
+                "admitted": str(item.admitted).lower(),
+                "cutoff_bid": "" if item.cutoff_bid is None else item.cutoff_bid,
+                "tie_break_used": str(item.tie_break_used).lower(),
+            }
+            for item in allocations
+        ],
+    )
+    write_csv_rows(
+        output_root / "budgets.csv",
+        ["run_id", "experiment_group", "student_id", "budget_start", "beans_bid_total", "beans_paid", "budget_end"],
+        [{"run_id": args.run_id, "experiment_group": args.experiment_group, **row} for row in budget_rows],
+    )
+    write_csv_rows(
+        output_root / "utilities.csv",
+        [
+            "run_id",
+            "student_id",
+            "gross_liking_utility",
+            "state_dependent_bean_cost_lambda",
+            "beans_cost",
+            "unmet_required_penalty",
+            "credits_selected",
+            "credit_cap_violation_count",
+            "time_conflict_violation_count",
+            "feasible_schedule_flag",
+            "net_total_utility",
+            "utility_per_bean",
+        ],
+        utilities,
+    )
+    utilities_by_student = {row["student_id"]: float(row["net_total_utility"]) for row in utilities}
+    scripted_values = [utilities_by_student[student_id] for student_id in scripted_students if student_id in utilities_by_student]
+    natural_values = [
+        utilities_by_student[student_id]
+        for student_id in student_ids
+        if student_id not in scripted_students and student_id in utilities_by_student
+    ]
+    scripted_gap = ""
+    if scripted_values and natural_values:
+        scripted_gap = round(
+            sum(scripted_values) / len(scripted_values) - sum(natural_values) / len(natural_values),
+            4,
+        )
+    metrics = {
+        "run_id": args.run_id,
+        "experiment_group": args.experiment_group,
+        "n_students": len(students),
+        "n_courses": len(courses),
+        "time_points": time_points,
+        "scripted_agent_count": len(scripted_students),
+        "scripted_agent_utility_gap": scripted_gap,
+        "average_net_total_utility": round(
+            sum(float(row["net_total_utility"]) for row in utilities) / max(1, len(utilities)), 4
+        ),
+        "average_beans_paid": round(sum(int(row["beans_paid"]) for row in budget_rows) / max(1, len(budget_rows)), 4),
+        "average_state_dependent_bean_cost_lambda": round(
+            sum(final_lambda_by_student.values()) / max(1, len(final_lambda_by_student)),
+            4,
+        ),
+        "admission_rate": round(
+            sum(1 for item in allocations if item.admitted) / max(1, len(allocations)),
+            4,
+        ),
+        "time_conflict_violation_count": sum(int(row["time_conflict_violation_count"]) for row in utilities),
+        "credit_cap_violation_count": sum(int(row["credit_cap_violation_count"]) for row in utilities),
+        "infeasible_schedule_count": sum(1 for row in utilities if row["feasible_schedule_flag"] == "false"),
+        "json_failure_count": json_failure_count,
+        "invalid_bid_count": invalid_bid_count,
+        "over_budget_count": over_budget_count,
+        "constraint_violation_rejected_count": constraint_violation_rejected_count,
+        "behavior_tag_counts": count_behavior_tags(bid_events),
+    }
+    (output_root / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    with (output_root / "llm_traces.jsonl").open("w", encoding="utf-8") as f:
+        for trace in traces:
+            f.write(json.dumps(trace, ensure_ascii=False) + "\n")
+    print(f"Run complete: {output_root.resolve()}")
+
+
+if __name__ == "__main__":
+    main()

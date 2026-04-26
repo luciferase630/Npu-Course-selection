@@ -6,12 +6,15 @@
 
 - 学生信息：`{{student_profile}}`
 - 本轮可用预算：`{{budget_available}}`
+- 当前状态下1个豆子的机会成本：`{{state_dependent_bean_cost_lambda}}`
 - 轮内投豆事件：`{{bid_events}}`
 - 投豆决策：`{{bids}}`
 - 最终录取结果：`{{allocation_result}}`
 - 决策时可见容量与待选人数：`{{observed_capacity_and_waitlist}}`
-- 学生-课程班先验主观价值边：`{{utility_edges}}`
-- 未完成必修惩罚：`{{missing_required_penalties}}`
+- 课程班元数据：`{{course_metadata}}`
+- 学生-课程班主观喜爱程度边：`{{utility_edges}}`
+- 学生-课程代码完成要求：`{{course_code_requirements}}`
+- 派生未完成课程代码惩罚：`{{derived_missing_required_penalties}}`
 - 公式信息状态：`{{formula_information_state}}`
 - 学生代理类型：`{{agent_type}}`
 - 脚本策略名称：`{{script_policy_name}}`
@@ -22,7 +25,7 @@
 
 请用中文回答：
 
-1. 该学生主要看重哪些先验主观价值来源，例如老师印象、课程兴趣、给分传闻、时间便利或必修完成。
+1. 该学生主要看重哪些课程班 `utility` 较高的选择，以及这些选择可能对应老师印象、课程兴趣、给分传闻或时间便利等主观吸引力。
 2. 他是否采取了集中投豆、均匀投豆、保留预算、赌冷门或参考公式信号的策略。
 3. 他如何利用当前待选人数和容量判断竞争强度。
 4. 他是否出现早期试探、拥挤退缩、临近容量撤豆、最后一刻押入或防御性加豆。

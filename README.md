@@ -10,7 +10,7 @@
 - 可见信息：学生在选课过程中能看到课程班容量和当前待选人数，但看不到其他人的投豆数。
 - 策略对象：学生个体，而不是学校机制设计者。
 - 数据来源：第一阶段使用合成数据，不依赖真实教务系统数据。
-- 效用模型：用学生-课程班效用边表表示个体偏好，同一课程代码下不同老师、时间、班级可以有不同效用。
+- 效用模型：用学生-课程班效用边表表示个体对教学班的主观喜爱程度，必修惩罚、状态依赖豆子影子价格、学分和课表约束另行建模。
 - 大模型实验：后续让大模型扮演学生，根据效用、预算、培养方案和轮次历史生成投豆方案。
 - 神秘公式：暂时不作为通用最优解；单独分析其数学合理性和作为外部信息冲击的影响。
 
@@ -62,13 +62,68 @@
 - `data/schemas/`：放数据表字段定义、取值约束和校验规则。
 - `configs/`：放实验配置，例如预算、轮次、课程开放比例、随机种子、退豆规则。
 - `prompts/`：放大模型扮演学生和解释策略时使用的提示词模板。
-- `src/`：后续放 Python 代码；当前只保留模块分区，不写实现。
+- `src/`：放 Python 实验平台代码，包括合成数据生成、学生代理、LLM 客户端、开奖机制和实验调度。
 - `outputs/runs/`：每次实验的完整运行结果，按 `run_id` 分文件夹保存。
 - `outputs/tables/`：聚合后的指标表、对照表、消融实验表。
 - `outputs/figures/`：可视化图片，例如投豆分布、课程拥挤度、预算消耗曲线。
 - `outputs/llm_traces/`：大模型原始决策记录和解释日志。
 - `reports/interim/`：阶段性分析和实验记录。
 - `reports/final/`：最终论文、答辩材料或完整建模报告。
+
+## 快速运行 MVP
+
+创建并激活虚拟环境：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+生成小规模合成数据：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset smoke
+```
+
+运行 mock 大模型冒烟实验：
+
+```powershell
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id smoke_mock --agent mock --experiment-group E0_llm_natural_baseline
+```
+
+运行带单个脚本策略学生的对照实验：
+
+```powershell
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id smoke_e1 --agent mock --experiment-group E1_one_scripted_policy_agent --script-policy utility_weighted
+```
+
+运行重复实验：
+
+```powershell
+python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_model.yaml --run-prefix e0_mock --agent mock --experiment-group E0_llm_natural_baseline --n-repetitions 50
+```
+
+结果会写入：
+
+```text
+outputs/runs/<run_id>/
+```
+
+真实大模型调用使用 OpenAI-compatible 环境变量：
+
+```powershell
+$env:OPENAI_API_KEY="..."
+$env:OPENAI_MODEL="..."
+# 可选：$env:OPENAI_BASE_URL="..."
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id real_llm_001 --agent openai --experiment-group E0_llm_natural_baseline
+```
+
+运行标准库测试：
+
+```powershell
+python -m unittest discover
+```
 
 ## 后续建议顺序
 

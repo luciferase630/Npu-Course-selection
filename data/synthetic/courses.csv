@@ -1,0 +1,9 @@
+course_id,course_code,name,teacher_id,teacher_name,capacity,time_slot,credit,category,is_required,release_round
+MATH101-A,MATH101,Calculus A,T001,Prof Lin,2,Mon-1-2,4,Math,true,1
+MATH101-B,MATH101,Calculus B,T002,Prof Chen,2,Tue-1-2,4,Math,true,1
+CS101-A,CS101,Intro CS A,T003,Prof Wang,3,Wed-3-4,3,CS,true,1
+CS101-B,CS101,Intro CS B,T004,Prof Zhao,2,Thu-3-4,3,CS,true,1
+WINE201-A,WINE201,Wine Appreciation,T005,Prof Qian,2,Fri-7-8,2,Elective,false,1
+ART110-A,ART110,Art History,T006,Prof Sun,4,Mon-5-6,2,Elective,false,1
+ENG101-A,ENG101,College English A,T007,Prof Zhou,3,Tue-5-6,2,English,true,1
+PE101-A,PE101,Badminton,T008,Coach Wu,3,Wed-7-8,1,PE,false,1

@@ -1,11 +1,17 @@
 # src
 
-后续 Python 代码分区如下：
+Python 实验平台代码目录。
 
-- `data_generation/`：生成合成学生、课程班、老师、学生-课程班效用边表和轮次数据。
-- `auction_mechanism/`：实现单轮和三轮开奖、边界同分抽签、退豆、预算更新和录取结果校验。
-- `student_agents/`：实现效用最大化规则策略、大模型学生代理、公式信息组策略和输出校验；所有最终投豆必须校验为非负整数。
-- `llm_clients/`：封装大模型 API 调用、重试、日志和输出解析。
-- `experiments/`：组织实验运行、效用指标统计、公式信息冲击对照和结果保存。
+- `data_generation/`：合成数据生成、CSV 读取和基础校验。
+- `auction_mechanism/`：单轮 all-pay 开奖、边界同分抽签、预算消耗。
+- `student_agents/`：学生私有上下文、动态交互状态、输出校验。
+- `llm_clients/`：mock LLM 和 OpenAI-compatible API 客户端。
+- `experiments/`：单轮 MVP 实验调度入口。
 
-当前阶段只定义结构，不写实现代码。
+当前可运行入口：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset smoke
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id smoke_mock --agent mock --experiment-group E0_llm_natural_baseline
+python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_model.yaml --run-prefix e0_mock --agent mock --experiment-group E0_llm_natural_baseline --n-repetitions 3
+```
