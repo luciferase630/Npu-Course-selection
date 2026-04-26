@@ -53,7 +53,8 @@ class OpenAICompatibleClient:
             raise RuntimeError("OPENAI_MODEL is required for --agent openai")
         from openai import OpenAI
 
-        kwargs = {"api_key": api_key}
+        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
+        kwargs = {"api_key": api_key, "timeout": timeout_seconds}
         base_url = os.environ.get("OPENAI_BASE_URL")
         if base_url:
             kwargs["base_url"] = base_url

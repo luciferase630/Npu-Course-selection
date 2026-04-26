@@ -62,11 +62,12 @@ class ToolEnvTests(unittest.TestCase):
         session = make_session()
         result = session.call_tool("submit_bids", {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "B-1", "bid": 60}]})
         self.assertEqual(result["status"], "rejected")
-        self.assertIn("repair_suggestions", result)
-        self.assertLessEqual(
-            sum(item["bid"] for item in result["repair_suggestions"]["suggested_feasible_bids"]),
-            session.student.budget_initial,
-        )
+        self.assertNotIn("repair" + "_suggestions", result)
+        self.assertIn("conflict_summary", result)
+        self.assertEqual(result["conflict_summary"]["budget_status"]["budget_excess"], 20)
+        self.assertEqual(result["conflict_summary"]["budget_status"]["minimum_bid_reduction_required"], 20)
+        self.assertEqual(len(result["conflict_summary"]["time_conflict_groups"]), 1)
+        self.assertEqual(result["conflict_summary"]["time_conflict_groups_by_slot"][0]["time_slot"], "Mon-1-2")
         self.assertFalse(session.state[("S001", "A-1")].selected)
         self.assertEqual(session.draft_bids, {})
 
@@ -95,7 +96,8 @@ class ToolEnvTests(unittest.TestCase):
             {"status": "rejected", "violations": [{"type": "over_budget"}]},
             rounds_remaining=6,
         )
-        self.assertIn("Fix the returned violations", instruction)
+        self.assertIn("Review conflict_summary", instruction)
+        self.assertIn("You decide", instruction)
 
     def test_protocol_instruction_pushes_near_limit_to_submit(self) -> None:
         session = make_session()
@@ -103,15 +105,36 @@ class ToolEnvTests(unittest.TestCase):
         self.assertIn("near the round limit", instruction)
         self.assertIn("Call submit_bids next", instruction)
 
-    def test_protocol_instruction_uses_repair_suggestion_when_available(self) -> None:
+    def test_protocol_instruction_keeps_decision_with_llm(self) -> None:
         session = make_session()
         instruction = session.build_protocol_instruction(
             "check_schedule",
-            {"feasible": False, "repair_suggestions": {"suggested_feasible_bids": [{"course_id": "A-1", "bid": 50}]}},
+            {"feasible": False, "violations": [{"type": "time_conflict"}], "conflict_summary": {}},
             rounds_remaining=1,
         )
-        self.assertIn("suggested_feasible_bids", instruction)
-        self.assertIn("submit_bids now", instruction)
+        self.assertIn("You decide", instruction)
+        self.assertNotIn("suggested" + "_feasible_bids", instruction)
+        self.assertNotIn("exactly", instruction)
+
+    def test_conflict_summary_reports_duplicate_course_id_and_course_code(self) -> None:
+        session = make_session()
+        result = session.call_tool(
+            "check_schedule",
+            {
+                "bids": [
+                    {"course_id": "A-1", "bid": 30},
+                    {"course_id": "A-1", "bid": 20},
+                    {"course_id": "A-2", "bid": 30},
+                ]
+            },
+        )
+        summary = result["conflict_summary"]
+        self.assertEqual(summary["duplicate_course_ids"], ["A-1"])
+        self.assertEqual(summary["duplicate_course_code_groups"][0]["course_code"], "A")
+        self.assertEqual(summary["duplicate_course_code_groups"][0]["rule"], "keep at most one")
+        self.assertIn("hard_rules_to_satisfy", summary)
+        self.assertNotIn("utility", str(summary))
+        self.assertNotIn("derived_missing_required_penalty", str(summary))
 
 
 if __name__ == "__main__":

@@ -455,6 +455,7 @@ def main() -> None:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--interaction-mode", choices=["single_shot", "tool_based"], default=None)
     parser.add_argument("--time-points", type=int, default=None)
+    parser.add_argument("--progress-interval", type=int, default=0)
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -515,6 +516,8 @@ def main() -> None:
     tool_round_limit_count = 0
     tool_request_char_count_total = 0
     tool_request_char_count_max = 0
+    processed_decisions = 0
+    total_decisions = time_points * len(student_ids)
 
     for time_point in range(1, time_points + 1):
         order = student_ids[:]
@@ -772,6 +775,14 @@ def main() -> None:
                     "attempts": attempts,
                 }
             )
+            processed_decisions += 1
+            if args.progress_interval > 0 and processed_decisions % args.progress_interval == 0:
+                print(
+                    f"Progress: {processed_decisions}/{total_decisions} decisions "
+                    f"(time_point={time_point}, fallback={fallback_keep_previous_count}, "
+                    f"tool_round_limit={tool_round_limit_count})",
+                    flush=True,
+                )
 
     final_decisions = final_decisions_from_state(state, available_by_student)
     allocations = allocate_courses(courses, final_decisions, seed + 999)

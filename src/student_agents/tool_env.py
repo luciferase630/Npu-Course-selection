@@ -106,21 +106,20 @@ class StudentSession:
         This is intentionally owned by the session layer because it depends on
         course-selection semantics, not on the transport used to call an LLM.
         """
-        repair = last_tool_result.get("repair_suggestions", {}) if isinstance(last_tool_result, dict) else {}
-        if repair.get("suggested_feasible_bids") and last_tool_name in {"check_schedule", "submit_bids"}:
-            return (
-                "The previous proposal was not feasible. Use "
-                "tool_result.repair_suggestions.suggested_feasible_bids exactly, or an even smaller feasible subset, "
-                "and call submit_bids now."
-            )
         if last_tool_name == "check_schedule" and last_tool_result.get("feasible"):
             return "The checked proposal is feasible. Call submit_bids with the same bids now."
-        if last_tool_name == "submit_bids" and last_tool_result.get("status") == "rejected":
-            return "Fix the returned violations and call submit_bids again."
+        if last_tool_name in {"check_schedule", "submit_bids"} and not last_tool_result.get("feasible"):
+            violations = last_tool_result.get("violations", []) if isinstance(last_tool_result, dict) else []
+            return (
+                f"Your proposal has {len(violations)} violations. Review conflict_summary to understand the hard "
+                "constraints, especially time_conflict_groups_by_slot, duplicate_course_code_groups, budget_excess, "
+                "and credit_excess. Fix every listed group, then submit again. You decide which courses to keep "
+                "and how to allocate your budget."
+            )
         if rounds_remaining <= 2:
             return (
-                "You are near the round limit. Stop browsing. Call submit_bids next using the best feasible "
-                "courses you already know."
+                "You are near the round limit. Stop browsing. Call submit_bids next with a proposal that satisfies "
+                "the hard constraints. You decide which courses to keep and how to allocate your budget."
             )
         return "Continue using tools only if needed; finish with submit_bids."
 
@@ -224,14 +223,13 @@ class StudentSession:
     def check_schedule(self, arguments: dict | None = None) -> dict:
         arguments = arguments or {}
         parse_result = self._parse_proposal(arguments)
-        if parse_result["violations"]:
-            return self._schedule_result(parse_result["bids"], parse_result["violations"])
-        return self._schedule_result(parse_result["bids"], self._constraint_violations(parse_result["bids"]))
+        violations = parse_result["violations"] + self._constraint_violations(parse_result["bids"])
+        return self._schedule_result(parse_result["bids"], violations)
 
     def submit_bids(self, arguments: dict | None = None) -> dict:
         arguments = arguments or {}
         parse_result = self._parse_proposal(arguments)
-        violations = parse_result["violations"] or self._constraint_violations(parse_result["bids"])
+        violations = parse_result["violations"] + self._constraint_violations(parse_result["bids"])
         if violations:
             return {"status": "rejected", **self._schedule_result(parse_result["bids"], violations)}
         self.draft_bids = parse_result["bids"]
@@ -395,68 +393,106 @@ class StudentSession:
             },
         }
         if violations:
-            result["repair_suggestions"] = self._build_repair_suggestions(bids)
+            result["conflict_summary"] = self._build_conflict_summary(bids, violations)
         return result
 
-    def _build_repair_suggestions(self, bids: dict[str, int]) -> dict:
-        selected_ids = [course_id for course_id in bids if course_id in self.courses]
-        selected_ids.sort(key=lambda course_id: self._repair_priority(course_id, bids.get(course_id, 0)), reverse=True)
-        kept_ids: list[str] = []
-        removed_ids: list[str] = []
-        used_codes: set[str] = set()
-        used_slots: set[str] = set()
-        total_credits = 0.0
-        for course_id in selected_ids:
+    def _build_conflict_summary(self, bids: dict[str, int], violations: list[dict]) -> dict:
+        total_bid = sum(bids.values())
+        total_credits = sum(self.courses[course_id].credit for course_id in bids if course_id in self.courses)
+        submitted_courses = []
+        for course_id in sorted(course_id for course_id in bids if course_id in self.courses):
             course = self.courses[course_id]
-            slots = split_time_slots(course.time_slot)
-            if course.course_code in used_codes:
-                removed_ids.append(course_id)
+            submitted_courses.append(
+                {
+                    "course_id": course_id,
+                    "course_code": course.course_code,
+                    "bid": bids[course_id],
+                    "time_slot": course.time_slot,
+                    "credit": course.credit,
+                    "capacity": course.capacity,
+                    "observed_waitlist_count": self.current_waitlist_counts.get(course_id, 0),
+                }
+            )
+
+        duplicate_course_ids = sorted(
+            {str(item.get("course_id")) for item in violations if item.get("type") == "duplicate_course_id"}
+        )
+        duplicate_course_code_groups = [
+            {
+                "course_code": str(item.get("course_code", "")),
+                "course_ids": sorted(str(course_id) for course_id in item.get("course_ids", [])),
+                "rule": "keep at most one",
+            }
+            for item in violations
+            if item.get("type") == "duplicate_course_code"
+        ]
+        time_conflict_groups = [
+            {
+                "course_ids": sorted(str(course_id) for course_id in item.get("course_ids", [])),
+                "overlap": sorted(str(slot) for slot in item.get("overlap", [])),
+                "rule": "keep at most one",
+            }
+            for item in violations
+            if item.get("type") == "time_conflict"
+        ]
+        by_slot: dict[str, list[str]] = {}
+        for course_id in bids:
+            if course_id not in self.courses:
                 continue
-            if used_slots & slots:
-                removed_ids.append(course_id)
-                continue
-            if total_credits + course.credit > self.student.credit_cap:
-                removed_ids.append(course_id)
-                continue
-            kept_ids.append(course_id)
-            used_codes.add(course.course_code)
-            used_slots.update(slots)
-            total_credits += course.credit
-        suggested_bids = self._budget_fit_bids(kept_ids, bids)
+            for slot in split_time_slots(self.courses[course_id].time_slot):
+                by_slot.setdefault(slot, []).append(course_id)
+        time_conflict_groups_by_slot = [
+            {
+                "time_slot": slot,
+                "course_ids": sorted(course_ids),
+                "rule": "keep at most one course containing this time_slot",
+            }
+            for slot, course_ids in sorted(by_slot.items())
+            if len(course_ids) > 1
+        ]
+        unknown_course_ids = sorted(
+            {str(item.get("course_id")) for item in violations if item.get("type") == "unknown_course_id"}
+        )
+        invalid_bid_items = [
+            {key: value for key, value in item.items() if key in {"type", "course_id", "message"}}
+            for item in violations
+            if item.get("type") in {"invalid_bid", "invalid_bid_item", "invalid_arguments"}
+        ]
+
         return {
-            "suggested_feasible_bids": suggested_bids,
-            "removed_course_ids": sorted(removed_ids),
+            "selected_count": len(bids),
+            "submitted_courses": submitted_courses,
+            "budget_status": {
+                "total_bid": total_bid,
+                "budget_initial": self.student.budget_initial,
+                "budget_remaining": self.student.budget_initial - total_bid,
+                "budget_excess": max(0, total_bid - self.student.budget_initial),
+                "minimum_bid_reduction_required": max(0, total_bid - self.student.budget_initial),
+            },
+            "credit_status": {
+                "total_credits": round(total_credits, 4),
+                "credit_cap": self.student.credit_cap,
+                "credit_remaining": round(self.student.credit_cap - total_credits, 4),
+                "credit_excess": round(max(0.0, total_credits - self.student.credit_cap), 4),
+                "minimum_credit_reduction_required": round(max(0.0, total_credits - self.student.credit_cap), 4),
+            },
+            "duplicate_course_ids": duplicate_course_ids,
+            "duplicate_course_code_groups": duplicate_course_code_groups,
+            "time_conflict_groups": time_conflict_groups,
+            "time_conflict_groups_by_slot": time_conflict_groups_by_slot,
+            "unknown_course_ids": unknown_course_ids,
+            "invalid_bid_items": invalid_bid_items,
+            "hard_rules_to_satisfy": [
+                "total_bid must be <= budget_initial",
+                "total_credits must be <= credit_cap",
+                "each duplicate_course_code_group must keep at most one course_id",
+                "each time_conflict_groups_by_slot group must keep at most one course_id",
+            ],
             "instruction": (
-                "These bids are a platform-generated feasible repair for the listed violations. "
-                "You may submit them directly or submit a smaller feasible subset."
+                "This summary only states hard-constraint facts. You decide which courses to keep and how to "
+                "allocate your budget."
             ),
         }
-
-    def _budget_fit_bids(self, course_ids: list[str], original_bids: dict[str, int]) -> list[dict]:
-        budget = self.student.budget_initial
-        bids = {course_id: max(0, int(original_bids.get(course_id, 0))) for course_id in course_ids}
-        total_bid = sum(bids.values())
-        if total_bid <= budget:
-            return [{"course_id": course_id, "bid": bids[course_id]} for course_id in course_ids]
-        weights = [max(1.0, self._repair_priority(course_id, bids.get(course_id, 0))) for course_id in course_ids]
-        total_weight = sum(weights)
-        fitted = []
-        spent = 0
-        for index, (course_id, weight) in enumerate(zip(course_ids, weights)):
-            if index == len(course_ids) - 1:
-                bid = budget - spent
-            else:
-                bid = int(budget * weight / total_weight)
-                bid = min(bid, budget - spent)
-            spent += bid
-            fitted.append({"course_id": course_id, "bid": max(0, bid)})
-        return fitted
-
-    def _repair_priority(self, course_id: str, bid: int) -> float:
-        course = self.courses[course_id]
-        edge = self.edges[(self.student.student_id, course_id)]
-        requirement_pressure = self.derived_penalties.get((self.student.student_id, course.course_code), 0.0)
-        return float(edge.utility) + 0.15 * requirement_pressure + 0.05 * max(0, bid)
 
     @staticmethod
     def _action_type(selected: bool, bid: int, previous_selected: bool, previous_bid: int) -> str:
