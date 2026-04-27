@@ -17,6 +17,8 @@ PROFILE_ROWS = [
     {"profile_id": "SE_2026", "profile_name": "Software Engineering", "college": "ComputerScience"},
     {"profile_id": "AI_2026", "profile_name": "Artificial Intelligence", "college": "ComputerScience"},
     {"profile_id": "MATH_2026", "profile_name": "Applied Mathematics", "college": "Mathematics"},
+    {"profile_id": "DS_2026", "profile_name": "Data Science", "college": "ComputerScience"},
+    {"profile_id": "CY_2026", "profile_name": "Cybersecurity", "college": "ComputerScience"},
 ]
 PROFILES = [row["profile_id"] for row in PROFILE_ROWS]
 PROFILE_BY_ID = {row["profile_id"]: row for row in PROFILE_ROWS}
@@ -53,6 +55,7 @@ class GenerationShape:
     n_course_sections: int
     n_profiles: int
     n_course_codes: int
+    competition_profile: str = "high"
 
 
 def clamp(value: float, lower: int = 1, upper: int = 100) -> int:
@@ -115,11 +118,16 @@ def build_shape(
     n_students: int | None = None,
     n_course_sections: int | None = None,
     n_profiles: int | None = None,
+    competition_profile: str = "high",
 ) -> GenerationShape:
     if preset == "medium":
         return GenerationShape("medium", 100, 80, 4, 51)
     if preset == "behavioral_large":
         return GenerationShape("behavioral_large", 300, 120, 4, 77)
+    if preset == "research_large":
+        if competition_profile not in {"high", "medium", "sparse_hotspots"}:
+            raise ValueError("research_large competition_profile must be high, medium, or sparse_hotspots")
+        return GenerationShape("research_large", 800, 240, 6, 154, competition_profile)
     if preset in {"catalog_stress", "legacy_40x200"}:
         return GenerationShape("catalog_stress", 40, 200, 4, 128)
     if preset != "custom":
@@ -321,6 +329,16 @@ def category_counts_for_shape(n_course_codes: int, n_profiles: int) -> dict[str,
             "English": 5,
             "PE": 5,
             "LabSeminar": 4,
+        }
+    if n_course_codes == 154 and n_profiles == 6:
+        return {
+            "Foundation": 24,
+            "MajorCore": 42,
+            "MajorElective": 44,
+            "GeneralElective": 26,
+            "English": 6,
+            "PE": 6,
+            "LabSeminar": 6,
         }
     counts = {
         "Foundation": 4,
@@ -547,12 +565,25 @@ def generate_course_sections(
     code_specs: list[CourseCodeSpec],
     n_course_sections: int = 200,
     n_students: int = 40,
+    competition_profile: str = "high",
 ) -> tuple[list[dict], dict[str, float], dict[str, float], dict[str, CourseCodeSpec]]:
     if n_course_sections < len(code_specs):
         raise ValueError(f"n_course_sections={n_course_sections} is below course_code count {len(code_specs)}")
     spec_by_code = {spec.course_code: spec for spec in code_specs}
     section_counts = {spec.course_code: 1 for spec in code_specs}
-    if n_course_sections >= 80:
+    is_research_large_shape = n_students >= 500 and n_course_sections >= 220
+    if is_research_large_shape:
+        profile_count = len({tag for spec in code_specs for tag in spec.profile_tags})
+        for spec in code_specs:
+            if spec.course_code in {"FND001", "ENG001", "MCO001"}:
+                section_counts[spec.course_code] = 6
+            elif spec.category == "Foundation" and 2 <= int(spec.course_code[3:]) <= 1 + profile_count:
+                section_counts[spec.course_code] = 2
+            elif spec.category == "MajorCore" and 2 <= int(spec.course_code[3:]) <= 1 + profile_count * 3:
+                section_counts[spec.course_code] = 2
+            elif spec.category == "MajorElective" and int(spec.course_code[3:]) <= profile_count * 5:
+                section_counts[spec.course_code] = 2
+    elif n_course_sections >= 80:
         for spec in code_specs:
             if spec.is_public_required and spec.category in {"Foundation", "English", "MajorCore"}:
                 section_counts[spec.course_code] = 2
@@ -568,6 +599,16 @@ def generate_course_sections(
         "PE": 1.5,
         "LabSeminar": 1.1,
     }
+    if is_research_large_shape:
+        extra_weights = {
+            "Foundation": 1.2,
+            "MajorCore": 2.2,
+            "MajorElective": 2.0,
+            "GeneralElective": 1.8,
+            "English": 1.1,
+            "PE": 1.7,
+            "LabSeminar": 1.5,
+        }
     while sum(section_counts.values()) < n_course_sections:
         candidates = [spec.course_code for spec in code_specs if section_counts[spec.course_code] < 4]
         selected = weighted_choice(
@@ -577,7 +618,7 @@ def generate_course_sections(
         )
         section_counts[selected] += 1
 
-    teacher_count = 70 if n_course_sections >= 100 else max(24, math.ceil(n_course_sections * 0.6))
+    teacher_count = 120 if is_research_large_shape else (70 if n_course_sections >= 100 else max(24, math.ceil(n_course_sections * 0.6)))
     teacher_ids = [f"T{index:03d}" for index in range(1, teacher_count + 1)]
     teacher_quality = {teacher_id: rng.gauss(0, 11) for teacher_id in teacher_ids}
     course_quality = {spec.course_code: rng.gauss(0, 10) for spec in code_specs}
@@ -585,6 +626,13 @@ def generate_course_sections(
     slot_counts: Counter[str] = Counter()
     for spec in code_specs:
         credit = credit_for_category(rng, spec.category)
+        if is_research_large_shape:
+            if spec.course_code in {f"FND{index:03d}" for index in range(1, 8)}:
+                credit = 4.0
+            elif spec.course_code == "ENG001":
+                credit = 2.5
+            elif spec.category == "MajorCore" and spec.is_public_required:
+                credit = 3.0
         for section_index in range(section_counts[spec.course_code]):
             teacher_id = rng.choice(teacher_ids)
             section_letter = chr(ord("A") + section_index)
@@ -601,6 +649,46 @@ def generate_course_sections(
                 }
                 low, high = capacity_ranges[spec.category]
                 capacity = rng.randint(min(low, high), max(low, high))
+            elif is_research_large_shape:
+                if spec.course_code in {"FND001", "ENG001", "MCO001"}:
+                    low, high = (82, 122)
+                elif spec.category == "Foundation":
+                    low, high = (32, 58)
+                elif spec.category == "English":
+                    low, high = (36, 70)
+                elif spec.category == "MajorCore" and len(spec.profile_tags) == 1:
+                    low, high = (24, 48)
+                elif spec.category == "MajorCore":
+                    low, high = (34, 64)
+                else:
+                    ranges = {
+                        "MajorElective": (14, 30),
+                        "GeneralElective": (24, 50),
+                        "PE": (10, 20),
+                        "LabSeminar": (10, 24),
+                    }
+                    low, high = ranges[spec.category]
+                popularity = teacher_quality[teacher_id] + course_quality[spec.course_code]
+                if popularity >= 15:
+                    low = round(low * 0.88)
+                    high = round(high * 0.95)
+                elif popularity <= -12:
+                    low = round(low * 1.05)
+                    high = round(high * 1.15)
+                capacity = rng.randint(max(8, low), max(max(8, low), high))
+                if competition_profile == "medium":
+                    capacity = max(8, round(capacity * 1.85))
+                elif competition_profile == "sparse_hotspots":
+                    code_index = int(spec.course_code[3:]) if spec.course_code[3:].isdigit() else 999
+                    is_sparse_hotspot = (
+                        (spec.category == "PE" and code_index in {1, 4, 5})
+                        or (spec.category == "LabSeminar" and code_index in {1, 2, 6})
+                        or (spec.category == "MajorElective" and code_index in {19, 25, 28})
+                    )
+                    if is_sparse_hotspot:
+                        capacity = max(8, round(capacity * 1.05))
+                    else:
+                        capacity = max(8, round(capacity * 3.0))
             elif n_students >= 200 and n_course_sections <= 140:
                 if spec.course_code in {"FND001", "ENG001", "MCO001"}:
                     low, high = (50, 85)
@@ -729,7 +817,7 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
             spec.course_code
             for spec in by_category["MajorElective"]
             if profile_id in spec.profile_tags and spec.course_code not in required_codes
-        ]
+        ][:5]
         optional_targets = []
         general_electives = by_category["GeneralElective"]
         for offset in range(min(2, len(general_electives))):
@@ -847,7 +935,7 @@ def student_category_affinity(rng: random.Random, profile: str) -> dict[str, flo
         "MajorElective": rng.uniform(-2, 10),
         "GeneralElective": rng.uniform(13, 25),
         "English": rng.uniform(-5, 5),
-        "PE": rng.uniform(6, 14),
+        "PE": rng.uniform(12, 22),
         "LabSeminar": rng.uniform(10, 18),
     }
     if profile == "AI_2026":
@@ -971,6 +1059,8 @@ def is_course_eligible_for_student(
 def eligible_count_bounds(course_count: int) -> tuple[int, int]:
     if course_count <= 20:
         return course_count, course_count
+    if course_count >= 220:
+        return 120, min(185, course_count)
     if course_count >= 150:
         return 80, min(140, course_count)
     if course_count >= 100:
@@ -1315,6 +1405,7 @@ def build_synthetic_dataset(seed: int, shape: GenerationShape) -> dict[str, obje
             code_specs,
             shape.n_course_sections,
             shape.n_students,
+            shape.competition_profile,
         )
         profile_requirements = generate_profile_requirements(code_specs, profiles)
         requirements = generate_requirements(students, profile_requirements)
@@ -1349,6 +1440,7 @@ def build_synthetic_dataset(seed: int, shape: GenerationShape) -> dict[str, obje
             continue
         dataset["metadata"] = {
             "preset": shape.preset,
+            "competition_profile": shape.competition_profile,
             "seed": seed,
             "effective_seed": effective_seed,
             "generator_version": 2,
@@ -1444,6 +1536,12 @@ def default_output_dir_for_preset(preset: str, seed: int, shape: GenerationShape
         return Path("data/synthetic") / f"n{shape.n_students}_c{shape.n_course_sections}_p{shape.n_profiles}_seed{seed}"
     if preset == "behavioral_large":
         return Path("data/synthetic/behavioral_large")
+    if preset == "research_large":
+        if shape is not None and shape.competition_profile == "medium":
+            return Path("data/synthetic/research_large_medium_competition")
+        if shape is not None and shape.competition_profile == "sparse_hotspots":
+            return Path("data/synthetic/research_large_sparse_hotspots")
+        return Path("data/synthetic/research_large")
     return Path("data/synthetic")
 
 
@@ -1453,13 +1551,19 @@ def main() -> None:
     parser.add_argument(
         "--preset",
         default="smoke",
-        choices=["smoke", "medium", "behavioral_large", "catalog_stress", "legacy_40x200", "custom"],
+        choices=["smoke", "medium", "behavioral_large", "research_large", "catalog_stress", "legacy_40x200", "custom"],
     )
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--n-students", type=int, default=None)
     parser.add_argument("--n-course-sections", type=int, default=None)
     parser.add_argument("--n-profiles", type=int, default=None)
+    parser.add_argument(
+        "--competition-profile",
+        default="high",
+        choices=["high", "medium", "sparse_hotspots"],
+        help="Competition calibration for research_large; high preserves the existing default.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -1467,8 +1571,8 @@ def main() -> None:
     shape: GenerationShape | None = None
     if args.preset == "smoke":
         dataset = build_smoke_dataset(seed)
-    elif args.preset in {"medium", "behavioral_large", "catalog_stress", "legacy_40x200"}:
-        shape = build_shape(args.preset)
+    elif args.preset in {"medium", "behavioral_large", "research_large", "catalog_stress", "legacy_40x200"}:
+        shape = build_shape(args.preset, competition_profile=args.competition_profile)
         dataset = build_synthetic_dataset(seed, shape)
     else:
         shape = build_shape("custom", args.n_students, args.n_course_sections, args.n_profiles)

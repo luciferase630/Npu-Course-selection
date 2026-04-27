@@ -9,11 +9,13 @@
 
 ### 1.1 不同规模实验结果
 
-| 规模 | admission_rate | avg_selected | avg_beans | net_utility | time |
+| 规模 | admission_rate | avg_selected | avg_beans | legacy_net_utility | time |
 |---|---|---|---|---|---|
 | 100×80×1 | 0.8409 | — | — | — | 0.74s |
 | 100×80×3 | 0.8614 | 6.35 | 90.03 | -454.8 | 1.93s |
 | 300×120×1 | 0.6903 | 6.40 | 90.65 | -852.2 | 5.23s |
+
+注：本表产生于 net utility 口径重构前。`legacy_net_utility` 是旧 shadow-cost 指标，不再作为主福利结论；后续报告应使用 `course_outcome_utility`、`completed_requirement_value`、`remaining_requirement_risk` 和 admission/cost diagnostics。
 
 ### 1.2 Persona 分布（100 人）
 

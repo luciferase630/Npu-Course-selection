@@ -354,11 +354,22 @@ def audit_dataset_dir(data_dir: str | Path) -> dict:
     utilities = read_csv_rows(root / "student_course_utility_edges.csv")
     metadata_path = root / "generation_metadata.json"
     base_seed = 20260425
+    competition_profile = "high"
     if metadata_path.exists():
         with metadata_path.open("r", encoding="utf-8") as f:
             metadata = json.load(f)
         base_seed = int(metadata.get("seed", metadata.get("effective_seed", base_seed)))
-    return audit_rows(students, profiles, profile_requirements, courses, requirements, utilities, base_seed=base_seed)
+        competition_profile = str(metadata.get("competition_profile", competition_profile))
+    return audit_rows(
+        students,
+        profiles,
+        profile_requirements,
+        courses,
+        requirements,
+        utilities,
+        base_seed=base_seed,
+        competition_profile=competition_profile,
+    )
 
 
 def audit_rows(
@@ -369,6 +380,7 @@ def audit_rows(
     requirements: list[dict],
     utilities: list[dict],
     base_seed: int = 20260425,
+    competition_profile: str = "high",
 ) -> dict:
     errors: list[str] = []
     warnings: list[str] = []
@@ -451,13 +463,27 @@ def audit_rows(
                 continue
             overlap = required_codes_by_profile[left] & required_codes_by_profile[right]
             required_overlap_pairs[f"{left}|{right}"] = len(overlap)
-    if len(courses) >= 80 and len(common_required_codes) > 4:
+    is_main_competitive_medium = len(students) == 100 and len(courses) == 80
+    is_behavioral_large = len(students) == 300 and len(courses) == 120
+    is_research_large = len(students) == 800 and len(courses) == 240
+    if is_research_large and common_required_codes != {"FND001", "ENG001", "MCO001"}:
+        errors.append(
+            "research_large common required course_codes must be exactly "
+            f"['ENG001', 'FND001', 'MCO001'], got {sorted(common_required_codes)}"
+        )
+    elif len(courses) >= 80 and len(common_required_codes) > 4:
         errors.append(
             "too many required course_codes are shared by every profile: "
             f"{len(common_required_codes)} > 4 ({sorted(common_required_codes)})"
         )
-    is_main_competitive_medium = len(students) == 100 and len(courses) == 80
-    is_behavioral_large = len(students) == 300 and len(courses) == 120
+    if is_research_large:
+        too_high_overlap = {
+            pair: count
+            for pair, count in required_overlap_pairs.items()
+            if count > 4
+        }
+        if too_high_overlap:
+            errors.append(f"research_large pairwise required overlap must be <=4: {too_high_overlap}")
     if len(courses) >= 80:
         for profile_id in sorted(profile_ids):
             required_count = len(required_codes_by_profile[profile_id])
@@ -466,7 +492,7 @@ def audit_rows(
                 errors.append(f"profile {profile_id} required count is {required_count}, expected 7")
             if required_credits >= 30:
                 errors.append(f"profile {profile_id} required min credits {required_credits:.1f} must be below credit_cap 30")
-            if is_main_competitive_medium and not 20 <= required_credits <= 27:
+            if (is_main_competitive_medium or is_research_large) and not 20 <= required_credits <= 27:
                 errors.append(f"profile {profile_id} required min credits {required_credits:.1f} should be about 22-25")
 
     high_pressure_by_student: dict[str, list[str]] = defaultdict(list)
@@ -626,6 +652,67 @@ def audit_rows(
             errors.append(f"PE predicted demand share is too strong for behavioral_large: {pe_share:.4f}")
         if lab_share > 0.13:
             errors.append(f"LabSeminar predicted demand share is too strong for behavioral_large: {lab_share:.4f}")
+    elif is_research_large:
+        if competition_profile == "medium":
+            min_overloaded = 20
+            min_overloaded_or_near = 35
+            min_high_pressure = 6
+            admission_low, admission_high = 0.78, 0.90
+        elif competition_profile == "sparse_hotspots":
+            min_overloaded = 8
+            min_overloaded_or_near = 12
+            min_high_pressure = 0
+            admission_low, admission_high = 0.88, 0.97
+        else:
+            min_overloaded = 45
+            min_overloaded_or_near = 65
+            min_high_pressure = 12
+            admission_low, admission_high = 0.60, 0.80
+        if competition_pressure["predicted_overloaded_section_count"] < min_overloaded:
+            errors.append(
+                f"research_large {competition_profile} competition pressure too weak: "
+                f"expected at least {min_overloaded} predicted overloaded sections, got "
+                f"{competition_pressure['predicted_overloaded_section_count']}"
+            )
+        if (
+            competition_pressure["predicted_overloaded_section_count"]
+            + competition_pressure["predicted_near_full_section_count"]
+            < min_overloaded_or_near
+        ):
+            errors.append(
+                f"research_large {competition_profile} competition pressure too weak: "
+                f"expected at least {min_overloaded_or_near} overloaded or near-full sections, got "
+                f"{competition_pressure['predicted_overloaded_section_count'] + competition_pressure['predicted_near_full_section_count']}"
+            )
+        if competition_pressure["high_pressure_required_overloaded_section_count"] < min_high_pressure:
+            errors.append(
+                f"research_large {competition_profile} high-pressure required competition too weak: "
+                f"expected at least {min_high_pressure} overloaded required sections, got "
+                f"{competition_pressure['high_pressure_required_overloaded_section_count']}"
+            )
+        admission_proxy = float(competition_pressure["predicted_admission_rate_proxy"])
+        if not admission_low <= admission_proxy <= admission_high:
+            errors.append(
+                f"research_large {competition_profile} admission proxy should be in "
+                f"{admission_low:.2f}-{admission_high:.2f}, got "
+                f"{admission_proxy:.4f}"
+            )
+        demand_share = competition_pressure["predicted_demand_share_by_category"]
+        foundation_share = float(demand_share.get("Foundation", 0.0))
+        major_share = float(demand_share.get("MajorCore", 0.0)) + float(demand_share.get("MajorElective", 0.0))
+        general_share = float(demand_share.get("GeneralElective", 0.0))
+        pe_share = float(demand_share.get("PE", 0.0))
+        lab_share = float(demand_share.get("LabSeminar", 0.0))
+        if foundation_share > 0.35:
+            errors.append(f"Foundation predicted demand share is too dominant for research_large: {foundation_share:.4f}")
+        if not 0.38 <= major_share <= 0.62:
+            errors.append(f"MajorCore + MajorElective predicted demand share should be 0.38-0.62 for research_large: {major_share:.4f}")
+        if not 0.08 <= general_share <= 0.22:
+            errors.append(f"GeneralElective predicted demand share should be 0.08-0.22 for research_large: {general_share:.4f}")
+        if not 0.02 <= pe_share <= 0.09:
+            errors.append(f"PE predicted demand share should be 0.02-0.09 for research_large: {pe_share:.4f}")
+        if not 0.01 <= lab_share <= 0.10:
+            errors.append(f"LabSeminar predicted demand share should be 0.01-0.10 for research_large: {lab_share:.4f}")
     elif len(students) >= 80 and len(courses) >= 80:
         if competition_pressure["predicted_overloaded_section_count"] < 8:
             errors.append(

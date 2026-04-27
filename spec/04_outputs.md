@@ -74,9 +74,21 @@ $$
 
 字段：
 
-`run_id,student_id,gross_liking_utility,state_dependent_bean_cost_lambda,beans_cost,unmet_required_penalty,credits_selected,credit_cap_violation_count,time_conflict_violation_count,feasible_schedule_flag,net_total_utility,utility_per_bean`
+`run_id,student_id,gross_liking_utility,completed_requirement_value,course_outcome_utility,outcome_utility_per_bean,remaining_requirement_risk,state_dependent_bean_cost_lambda,beans_cost,unmet_required_penalty,credits_selected,credit_cap_violation_count,time_conflict_violation_count,feasible_schedule_flag,net_total_utility,legacy_net_total_utility,utility_per_bean`
 
-MVP 基础口径：
+当前主 outcome 口径：
+
+$$
+course\_outcome\_utility=
+gross\_liking\_utility
++completed\_requirement\_value
+$$
+
+其中 `completed_requirement_value` 是本轮已录取课程完成的 requirement course_code 对应派生价值之和，同一个 `course_code` 只计一次。`outcome_utility_per_bean` 是 `course_outcome_utility / beans_paid`，只作为策略效率指标，不解释为福利函数。
+
+因为豆子是单轮 use-it-or-lose-it 预算，未花豆没有残值，`beans_cost` 不再从主 outcome 中扣除。多年培养方案中尚未完成的要求记录为 `remaining_requirement_risk`，它等于历史口径里的 `unmet_required_penalty`，用于风险诊断，不作为本轮绝对失败惩罚。
+
+Legacy shadow-cost 口径仍保留：
 
 $$
 net\_total\_utility=
@@ -85,7 +97,7 @@ gross\_liking\_utility
 -\lambda_i(\mathbf{s}_i) beans\_paid
 $$
 
-其中 `gross_liking_utility` 是该学生最终中选教学班的输入字段 `utility` 之和。输出字段 `net_total_utility` 是实验结果净效用，不是输入偏好字段；输入偏好字段只叫 `utility`。
+其中 `gross_liking_utility` 是该学生最终中选教学班的输入字段 `utility` 之和。输出字段 `net_total_utility` / `legacy_net_total_utility` 是历史 shadow-cost 净效用，不是输入偏好字段，也不再作为主比较指标；输入偏好字段只叫 `utility`。
 
 MVP 可先设置：
 
@@ -95,7 +107,7 @@ $$
 
 其中 `bean_cost_lambda` 只是基准值。运行时应根据年级、风险类型、未完成要求压力和剩余预算派生 `state_dependent_bean_cost_lambda`，对应数学里的 $\lambda_i(\mathbf{s}_i)$。
 
-`unmet_required_penalty` 是由 `student_course_code_requirements.csv` 和 `requirement_penalty_model` 派生出的未完成课程代码惩罚汇总，不是源数据表里逐行手填的主观值。MVP 不自动修复冲突课表，但必须记录 `credits_selected`、`credit_cap_violation_count`、`time_conflict_violation_count` 和 `feasible_schedule_flag`。如果出现违规，报告中不能把该课表当作无条件有效的高效用结果。
+`unmet_required_penalty` 是由 `student_course_code_requirements.csv` 和 `requirement_penalty_model` 派生出的未完成课程代码惩罚汇总，不是源数据表里逐行手填的主观值。新报告应优先使用 `remaining_requirement_risk` 这个名称表达同一数值。MVP 不自动修复冲突课表，但必须记录 `credits_selected`、`credit_cap_violation_count`、`time_conflict_violation_count` 和 `feasible_schedule_flag`。如果出现违规，报告中不能把该课表当作无条件有效的高效用结果。
 
 ## 6. `llm_traces.jsonl`
 
@@ -136,7 +148,12 @@ $$
   "time_points": 5,
   "average_selected_courses": 0,
   "average_bid_concentration_hhi": 0,
+  "average_course_outcome_utility": 0,
+  "average_completed_requirement_value": 0,
+  "average_remaining_requirement_risk": 0,
+  "average_outcome_utility_per_bean": 0,
   "average_net_total_utility": 0,
+  "average_legacy_net_total_utility": 0,
   "average_beans_paid": 0,
   "average_state_dependent_bean_cost_lambda": 0,
   "admission_rate": 0,

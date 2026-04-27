@@ -117,10 +117,23 @@ python -m src.data_generation.generate_synthetic_mvp --config configs/simple_mod
 python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic/behavioral_large
 ```
 
+生成并审计 800×240×6 research large 强竞争数据：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset research_large
+python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic/research_large
+```
+
 运行 300×120×3 behavioral tool-based 验证：
 
 ```powershell
 python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id behavioral_large_300x120x3_persona_v2 --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/behavioral_large --interaction-mode tool_based --time-points 3
+```
+
+运行 800×240×3 behavioral tool-based 验证：
+
+```powershell
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id research_large_800x240x3_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/research_large --interaction-mode tool_based --time-points 3
 ```
 
 运行带单个脚本策略学生的对照实验：

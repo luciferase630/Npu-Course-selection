@@ -60,10 +60,12 @@ f(m, n, alpha) = (1 + alpha) * sqrt(m - n) * exp(m / n)
 
 | 维度 | 指标 | 评价 |
 |---|---|---|
-| **Outcome** | net_total_utility, admission_rate, selected_course_count | ✅ |
+| **Outcome** | course_outcome_utility, gross_liking_utility, completed_requirement_value, admission_rate, selected_course_count | ✅ |
 | **Cost** | excess bid, wasted beans, HHI | ✅ 特别关注 overbidding |
 | **Relative Position** | percentile among behavioral, A-B difference | ✅ 避免市场层面混淆 |
 | **Formula Behavior** | alpha 分布, adoption rate, signal vs final bid | ✅ 可追溯 LLM 如何使用公式 |
+
+注：`net_total_utility` 已降级为 legacy shadow-cost sensitivity，不再作为 headline outcome。
 
 ### 2.4 统计处理
 
