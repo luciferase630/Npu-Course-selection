@@ -10,6 +10,7 @@ from src.experiments.run_single_round_mvp import (
     compute_focal_metrics,
     compute_utilities,
     select_background_formula_students,
+    select_focal_share_students,
     validate_formula_runtime_args,
 )
 from src.llm_clients.behavioral_client import BehavioralFormulaAgentClient
@@ -133,6 +134,28 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertEqual(mapping["S1"], "behavioral")
         self.assertEqual(mapping["S2"], "cass")
         self.assertEqual(mapping["S3"], "behavioral")
+
+    def test_focal_agent_mapping_supports_multi_student_cohort(self) -> None:
+        mapping = build_agent_type_by_student(
+            ["S1", "S2", "S3", "S4"],
+            {"S4"},
+            "openai",
+            focal_student_ids={"S1", "S3"},
+            focal_agent_type="openai",
+        )
+        self.assertEqual(mapping["S1"], "openai")
+        self.assertEqual(mapping["S2"], "behavioral")
+        self.assertEqual(mapping["S3"], "openai")
+        self.assertEqual(mapping["S4"], "scripted_policy")
+
+    def test_focal_share_student_selection_is_deterministic_and_excludes_scripted(self) -> None:
+        student_ids = [f"S{i:03d}" for i in range(1, 801)]
+        left = select_focal_share_students(student_ids, 0.10, 20260425, {"S001", "S002"})
+        right = select_focal_share_students(student_ids, 0.10, 20260425, {"S001", "S002"})
+        self.assertEqual(left, right)
+        self.assertEqual(len(left), 80)
+        self.assertNotIn("S001", left)
+        self.assertNotIn("S002", left)
 
     def test_background_formula_student_selection_is_deterministic_and_excludes_focal(self) -> None:
         student_ids = [f"S{i:03d}" for i in range(1, 801)]
