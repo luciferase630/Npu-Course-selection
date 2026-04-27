@@ -56,3 +56,12 @@
 - During repair, the protocol should prefer shrinking or adjusting the current proposal before adding replacement courses. When `rounds_remaining <= 3`, the instruction must tell the model to stop browsing, avoid adding replacement courses, verify a smaller proposal with `check_schedule`, and submit only after feasibility is confirmed.
 - Large-scale validation metrics include `tool_interaction_count`, `average_tool_rounds_per_interaction`, `tool_request_char_count_total`, `tool_request_char_count_max`, `average_selected_courses`, `average_bid_concentration_hhi`, and `elapsed_seconds`.
 - For cost control, 40x200 online validation may use `--time-points 1`; full 5-time-point online runs should be explicitly approved before execution.
+
+## 7. Decision explanation logging
+
+- Tool-based model responses may include a top-level `decision_explanation` field. The final `submit_bids` response should include it.
+- `decision_explanation` is a public self-description of the decision basis, not hidden chain-of-thought and not provider-side `reasoning_content`.
+- The platform records each round's exact `raw_model_content`, parsed tool request, parsed `decision_explanation`, and tool result in `llm_traces.jsonl`.
+- The platform also writes `llm_model_outputs.jsonl`, one row per concrete model output, so reviewers can inspect what the model actually emitted without unpacking nested traces.
+- The platform writes `llm_decision_explanations.jsonl`, one row per student decision, with the final explanation, final model output, and application status.
+- Missing explanations are counted in `metrics.json` but do not invalidate an otherwise legal bid submission.

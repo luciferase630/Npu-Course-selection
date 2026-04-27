@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.llm_clients.openai_client import load_local_env, parse_json_object
+from src.llm_clients.openai_client import extract_decision_explanation, load_local_env, parse_json_object
 
 
 class OpenAIEnvLoadingTests(unittest.TestCase):
@@ -59,6 +59,34 @@ class OpenAIEnvLoadingTests(unittest.TestCase):
     def test_parse_json_object_accepts_markdown_fence(self) -> None:
         parsed = parse_json_object('```json\n{"student_id":"S001"}\n```')
         self.assertEqual(parsed["student_id"], "S001")
+
+    def test_extract_decision_explanation_handles_missing_string_and_object(self) -> None:
+        self.assertEqual(extract_decision_explanation({}), "")
+        self.assertEqual(
+            extract_decision_explanation({"decision_explanation": "  selected feasible required sections  "}),
+            "selected feasible required sections",
+        )
+        extracted = extract_decision_explanation(
+            {
+                "decision_explanation": {
+                    "summary": "selected high utility courses",
+                    "constraint_checks": ["budget", "time"],
+                }
+            }
+        )
+        self.assertIn("selected high utility courses", extracted)
+        self.assertIn("constraint_checks", extracted)
+
+    def test_extract_decision_explanation_falls_back_to_raw_content(self) -> None:
+        raw = (
+            '{"tool_name":"submit_bids","arguments":{"bids":[{"course_id":"A","bid":50}]},'
+            '"decision_explanation":"I kept the feasible required section and stayed within budget",'
+            '"truncated_object":{"x":'
+        )
+        self.assertEqual(
+            extract_decision_explanation({"tool_name": "__parse_error__"}, raw),
+            "I kept the feasible required section and stayed within budget",
+        )
 
 
 if __name__ == "__main__":

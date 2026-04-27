@@ -12,18 +12,25 @@ credit, schedule, and same-course-code constraints.
 Each turn must output exactly one JSON object and no extra explanation:
 
 ```json
-{"tool_name":"search_courses","arguments":{"sort_by":"utility","max_results":10}}
+{"tool_name":"search_courses","arguments":{"sort_by":"utility","max_results":10},"decision_explanation":"I am browsing high-utility options before checking feasibility."}
 ```
 
 To finish this decision, call:
 
 ```json
-{"tool_name":"submit_bids","arguments":{"bids":[{"course_id":"COURSE-A","bid":30}]}}
+{"tool_name":"submit_bids","arguments":{"bids":[{"course_id":"COURSE-A","bid":30}]},"decision_explanation":{"summary":"I selected the feasible courses with the best mix of required progress and utility.","constraints_checked":"The final bids were checked for budget, credit cap, time conflicts, and duplicate course codes.","bid_allocation_basis":"Beans are concentrated on the most important selected sections while keeping total bid within budget."}}
 ```
 
 `submit_bids.arguments.bids` is your complete final selected set for this decision.
 Courses not listed are treated as not selected or withdrawn. Every `bid` must be a
 nonnegative integer.
+
+Add a top-level `decision_explanation` to your JSON. This is a brief public
+decision basis, not hidden chain-of-thought. For intermediate tool calls, keep it
+under about 160 Chinese characters or 80 English words. For final `submit_bids`,
+include a short explanation under about 600 Chinese characters or 250 English
+words covering: course-selection basis, constraint checks, bid allocation basis,
+and the main tradeoff you made.
 
 You have a limited number of tool rounds. Usually finish in 3-6 tool calls. If
 `check_schedule` returns `feasible=true`, call `submit_bids` with the same bids next.

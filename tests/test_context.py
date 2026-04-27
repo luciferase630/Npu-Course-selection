@@ -3,7 +3,8 @@ from __future__ import annotations
 import unittest
 
 from src.models import CourseRequirement, Student
-from src.student_agents.context import derive_state_dependent_lambda
+from src.models import UtilityEdge
+from src.student_agents.context import derive_requirement_penalties, derive_state_dependent_lambda
 
 
 def student(
@@ -29,6 +30,13 @@ def requirement(student_id: str = "S1", course_code: str = "REQ101") -> CourseRe
         requirement_type="required",
         requirement_priority="normal",
     )
+
+
+def utility_edges(student_id: str = "S1") -> dict[tuple[str, str], UtilityEdge]:
+    return {
+        (student_id, f"C{index:03d}"): UtilityEdge(student_id, f"C{index:03d}", True, float(index))
+        for index in range(1, 101)
+    }
 
 
 class StateDependentLambdaTests(unittest.TestCase):
@@ -71,6 +79,13 @@ class StateDependentLambdaTests(unittest.TestCase):
             },
         )
         self.assertGreater(configured_lambda, default_lambda)
+
+    def test_requirement_penalty_uses_deadline_relative_to_grade(self) -> None:
+        students = {"S1": student("S1", "balanced", "junior")}
+        current = CourseRequirement("S1", "REQ101", "required", "degree_blocking", "junior")
+        future = CourseRequirement("S1", "REQ102", "required", "normal", "graduation_term")
+        penalties = derive_requirement_penalties(students, utility_edges(), [current, future])
+        self.assertGreater(penalties[("S1", "REQ101")], penalties[("S1", "REQ102")])
 
 
 if __name__ == "__main__":

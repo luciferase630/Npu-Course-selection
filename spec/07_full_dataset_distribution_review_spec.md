@@ -1,5 +1,17 @@
 # 全量基础数据集分布审阅规范
 
+## 2026-04-27 竞争压力审计更新
+
+本节覆盖本文中较早的 `40×200` 和 `eligible=all` 审阅口径。
+
+- 默认审阅对象 `medium` 改为 `100 students × 80 course sections × 4 profiles`。
+- `student_course_utility_edges.csv` 仍必须是完整边表，但 `eligible=false` 是允许且必要的行政资格信号。
+- `medium` 每个学生 eligible 数量目标为 `45-70 / 80`；每条 student requirement 必须能找到至少一个 eligible section。
+- 审计不使用“总容量 / 总学生数”判断竞争强度。竞争应来自热门必修、好老师、高 utility 和关键课程的局部超载，而不是每门课平均满员。
+- `audit_synthetic_dataset.py` 必须输出 `competition_pressure`：预测 demand/capacity、超载 section 数、近满 section 数、空 section 数、高压力 required 超载情况、p90/max competition ratio 和 predicted admission proxy。
+- `medium` 通过门槛：`predicted_overloaded_section_count >= 10`，高压力 required 中至少若干 section 超载，`predicted_admission_rate_proxy` 约 `0.75-0.90`。冷门选修空课只记录，不作为失败。
+- 午饭时段 `5-6` 继续严格低频：目标 `<=3%`，硬上限 `<=4%`。
+
 本文定义合成数据集生成后的审阅标准。它用于检查数据是否足够真实、是否符合建模口径、是否会因为生成偏差污染实验结论。默认审阅对象是 `medium`，同一组结构性检查也适用于 `custom` 小规模数据集。
 
 ## 1. 输入与输出检查
@@ -60,14 +72,15 @@ profile 完整性：
 
 requirements 派生正确性：
 
-- `student_course_code_requirements.csv` 中每一行，必须能通过该学生的 `profile_id` 在 `profile_requirements.csv` 中找到对应的 `(profile_id, course_code, requirement_type, requirement_priority, deadline_term)`。
+- `student_course_code_requirements.csv` 中每一行，必须能通过该学生的 `profile_id` 在 `profile_requirements.csv` 中找到对应的 `(profile_id, course_code, requirement_type, deadline_term)`。
+- `profile_requirements.csv` 的 required 集合表示多年培养方案事实；`student_course_code_requirements.csv.requirement_priority` 可以根据学生 `grade_stage` 和 `deadline_term` 动态派生。
 - 不同 profile 的 required course_code 集合应有可辨识差异，不能所有 profile 完全一样。
 - `student_course_code_requirements.csv` 不应包含手填惩罚数值字段，例如 `missing_required_penalty`。
 
 required 可满足性：
 
 - 对每条 profile requirement，`courses.csv` 中必须存在对应 `course_code`。
-- 当前 `medium` 和 `custom` 默认所有学生对所有教学班 `eligible=true`，因此每条 student requirement 应自然有可申请教学班。
+- `medium` 使用宽松但非全开的行政资格，因此每条 student requirement 必须显式检查至少有一个 `eligible=true` 的可申请教学班。
 
 ## 4. 学分分布检查
 
@@ -111,7 +124,9 @@ Mon,Tue,Wed,Thu,Fri
 
 分布验收：
 
-- `5-6` 占全部课次比例必须 `<=6%`。
+- `5-6` 占全部课次比例目标 `<=3%`，硬性上限 `<=4%`。
+- `Foundation`、`English`、`MajorCore` 和本轮高压力 required 默认不得排入 `5-6`。
+- `5-6` 不应集中在单个 weekday。
 - 任一 `weekday-time_block` 不超过全部课次的 `8%`。
 - `11-12` 课次至少为 `5`，或至少占总课次 `2%`，二者满足其一。
 - 对每个 category，若任一 `weekday-time_block` 承载超过该 category 总课次的 `15%`，标记为时间集中偏差。
@@ -131,19 +146,18 @@ Mon,Tue,Wed,Thu,Fri
 - 计算教师平均 utility 的变异系数 `CV = std(mean_utility_by_teacher) / mean(mean_utility_by_teacher)`。若 `CV < 0.15`，说明教师差异不足，review 至少应标为有条件通过。
 - 统计 utility 边界占比：`utility <= 5` 或 `utility >= 95` 的边占比应 `< 5%`。
 
-## 7. Eligible 全开放检查
+## 7. Eligible 宽松行政资格检查
 
 硬约束：
 
 - `eligible` 只表示学校系统是否允许申请该教学班，不表示专业匹配程度。
-- 当前不建先修课或行政限制表，因此每个学生都应对全部教学班 `eligible=true`。
-- `student_course_utility_edges.csv` 应包含完整边表：行数等于 `n_students × n_course_sections`。例如 `medium` 为 `8000` 行，`custom 10×20` 为 `200` 行。
-- 不应出现 `eligible=false`。
-- 每个学生的 required course_code 至少有一个可申请教学班；在全开放口径下，这应由完整边表自然保证。
+- `student_course_utility_edges.csv` 应包含完整边表：行数等于 `n_students × n_course_sections`。例如当前 `medium` 为 `100×80=8000` 行，`custom 10×20` 为 `200` 行。
+- 竞争性 `medium` 允许 `eligible=false`，目标为每个学生约 `45-70/80` 个 eligible section。
+- 每个学生的 required course_code 至少有一个可申请教学班；这必须逐条检查，不能再依赖全开放假设。
 
 profile 作用检查：
 
-- profile 不应过滤 eligible。
+- profile 不应把学生锁死在本专业；跨专业 eligible section 必须存在。
 - profile 只能影响 `utility` 的专业相关性和 `student_course_code_requirements.csv` 的课程代码要求。
 - 如果未来出现先修课硬门槛，应新增独立 prerequisite/administrative eligibility 规则，并在 review 中单独检查。
 
@@ -156,10 +170,21 @@ profile 作用检查：
 检查项：
 
 - 每个学生的完整教学班集合中，按 `time_slot` 统计分布。
-- 每个学生 required course_code 对应教学班不应全部集中在同一时间。
-- 对 medium 数据集，建议枚举每个学生 required course_code 的 eligible 教学班组合，检查是否存在至少一组无时间冲突、无同代码重复的组合。
+- 每个学生本轮高压力 required course_code 应控制在 `4-6` 门，最小学分总和应低于 `credit_cap` 并留出选修空间。
+- 每个学生本轮高压力 required course_code 对应教学班不应全部集中在同一时间。
+- 对 medium 数据集，建议枚举每个学生高压力 required course_code 的 eligible 教学班组合，检查是否存在至少一组无时间冲突、无同代码重复的组合。
 
 若无法严格验证组合可行性，review 应明确记录为“未做完整课表可行性证明”。
+
+## 8.5 自动审计入口
+
+生成 medium 后应运行：
+
+```powershell
+python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic
+```
+
+审计必须输出行数、午饭时段占比、按 weekday 分布、高压力 required 数量/学分、utility 分布和教师一致性。若审计 `passed=false`，不应继续消耗在线 LLM token 跑完整全量实验。
 
 ## 9. deterministic 检查
 

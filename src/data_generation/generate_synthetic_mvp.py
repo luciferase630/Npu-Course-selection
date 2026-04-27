@@ -25,11 +25,15 @@ TIME_BLOCKS = ["1-2", "3-4", "5-6", "7-8", "9-10", "11-12"]
 TIME_BLOCK_WEIGHTS = {
     "1-2": 1.0,
     "3-4": 1.1,
-    "5-6": 0.15,
+    "5-6": 0.02,
     "7-8": 1.0,
     "9-10": 0.9,
     "11-12": 0.65,
 }
+GRADE_STAGES = ["freshman", "sophomore", "junior", "senior", "graduation_term"]
+HIGH_PRESSURE_PRIORITIES = {"degree_blocking", "progress_blocking"}
+LUNCH_BLOCK = "5-6"
+LUNCH_ALLOWED_CATEGORIES = {"MajorElective", "GeneralElective", "PE", "LabSeminar"}
 LEGACY_PROFILE_FIELD = "required" + "_profile"
 
 
@@ -66,6 +70,19 @@ def weighted_choice(rng: random.Random, items: list[str], weights: dict[str, flo
     return items[-1]
 
 
+def weighted_choice_from_pairs(rng: random.Random, weighted_items: list[tuple[str, float]]) -> str:
+    total = sum(max(0.0, weight) for _item, weight in weighted_items)
+    if total <= 0:
+        return weighted_items[-1][0]
+    point = rng.random() * total
+    cumulative = 0.0
+    for item, weight in weighted_items:
+        cumulative += max(0.0, weight)
+        if point <= cumulative:
+            return item
+    return weighted_items[-1][0]
+
+
 def proportional_labels(total: int, weighted_labels: list[tuple[str, float]]) -> list[str]:
     raw_counts = [(label, total * weight) for label, weight in weighted_labels]
     counts = {label: int(math.floor(raw)) for label, raw in raw_counts}
@@ -100,7 +117,9 @@ def build_shape(
     n_profiles: int | None = None,
 ) -> GenerationShape:
     if preset == "medium":
-        return GenerationShape("medium", 40, 200, 4, 128)
+        return GenerationShape("medium", 100, 80, 4, 51)
+    if preset in {"catalog_stress", "legacy_40x200"}:
+        return GenerationShape("catalog_stress", 40, 200, 4, 128)
     if preset != "custom":
         raise ValueError(f"shape is not defined for preset {preset}")
     students = n_students or 10
@@ -281,6 +300,16 @@ def build_smoke_dataset(seed: int) -> dict[str, object]:
 
 
 def category_counts_for_shape(n_course_codes: int, n_profiles: int) -> dict[str, int]:
+    if n_course_codes == 51 and n_profiles == 4:
+        return {
+            "Foundation": 9,
+            "MajorCore": 13,
+            "MajorElective": 12,
+            "GeneralElective": 8,
+            "English": 3,
+            "PE": 3,
+            "LabSeminar": 3,
+        }
     if n_course_codes == 128 and n_profiles == 4:
         return {
             "Foundation": 20,
@@ -434,13 +463,35 @@ def section_count_for_credit(rng: random.Random, credit: float, category: str) -
     return 3 if rng.random() < 0.12 else 2
 
 
-def generate_time_slot(rng: random.Random, credit: float, category: str) -> str:
+def generate_time_slot(
+    rng: random.Random,
+    credit: float,
+    category: str,
+    slot_counts: Counter[str] | None = None,
+) -> str:
     slot_count = section_count_for_credit(rng, credit, category)
     picked: set[str] = set()
+    picked_days: set[str] = set()
+    slot_counts = slot_counts if slot_counts is not None else Counter()
     while len(picked) < slot_count:
-        day = rng.choice(WEEKDAYS)
-        block = weighted_choice(rng, TIME_BLOCKS, TIME_BLOCK_WEIGHTS)
-        picked.add(f"{day}-{block}")
+        weighted_slots: list[tuple[str, float]] = []
+        for day in WEEKDAYS:
+            if slot_count > 1 and day in picked_days and len(picked_days) < len(WEEKDAYS):
+                continue
+            for block in TIME_BLOCKS:
+                if block == LUNCH_BLOCK and category not in LUNCH_ALLOWED_CATEGORIES:
+                    continue
+                fragment = f"{day}-{block}"
+                if fragment in picked:
+                    continue
+                day_load = sum(slot_counts.get(f"{day}-{candidate_block}", 0) for candidate_block in TIME_BLOCKS)
+                load_penalty = 1.0 / ((1.0 + slot_counts.get(fragment, 0)) ** 1.7)
+                day_penalty = 1.0 / ((1.0 + day_load / 6.0) ** 1.2)
+                weighted_slots.append((fragment, TIME_BLOCK_WEIGHTS[block] * load_penalty * day_penalty))
+        fragment = weighted_choice_from_pairs(rng, weighted_slots)
+        picked.add(fragment)
+        picked_days.add(fragment.split("-")[0])
+        slot_counts[fragment] += 1
     return "|".join(sorted(picked))
 
 
@@ -496,6 +547,10 @@ def generate_course_sections(
         raise ValueError(f"n_course_sections={n_course_sections} is below course_code count {len(code_specs)}")
     spec_by_code = {spec.course_code: spec for spec in code_specs}
     section_counts = {spec.course_code: 1 for spec in code_specs}
+    if n_course_sections >= 80:
+        for spec in code_specs:
+            if spec.is_public_required and spec.category in {"Foundation", "English", "MajorCore"}:
+                section_counts[spec.course_code] = 2
     extra_weights = {
         "Foundation": 3.0,
         "MajorCore": 2.5,
@@ -514,11 +569,12 @@ def generate_course_sections(
         )
         section_counts[selected] += 1
 
-    teacher_count = 70 if n_course_sections >= 100 else max(8, math.ceil(n_course_sections * 0.6))
+    teacher_count = 70 if n_course_sections >= 100 else max(24, math.ceil(n_course_sections * 0.6))
     teacher_ids = [f"T{index:03d}" for index in range(1, teacher_count + 1)]
-    teacher_quality = {teacher_id: rng.gauss(0, 13) for teacher_id in teacher_ids}
+    teacher_quality = {teacher_id: rng.gauss(0, 11) for teacher_id in teacher_ids}
     course_quality = {spec.course_code: rng.gauss(0, 10) for spec in code_specs}
     rows: list[dict] = []
+    slot_counts: Counter[str] = Counter()
     for spec in code_specs:
         credit = credit_for_category(rng, spec.category)
         for section_index in range(section_counts[spec.course_code]):
@@ -537,6 +593,33 @@ def generate_course_sections(
                 }
                 low, high = capacity_ranges[spec.category]
                 capacity = rng.randint(min(low, high), max(low, high))
+            elif n_students >= 80 and n_course_sections <= 100:
+                if is_hot_required:
+                    ranges = {
+                        "Foundation": (28, 48),
+                        "MajorCore": (32, 55),
+                        "English": (30, 50),
+                    }
+                    low, high = ranges.get(spec.category, (18, 32))
+                else:
+                    ranges = {
+                        "Foundation": (18, 30),
+                        "MajorCore": (16, 30),
+                        "MajorElective": (7, 16),
+                        "GeneralElective": (5, 12),
+                        "English": (20, 34),
+                        "PE": (5, 12),
+                        "LabSeminar": (5, 12),
+                    }
+                    low, high = ranges[spec.category]
+                popularity = teacher_quality[teacher_id] + course_quality[spec.course_code]
+                if popularity >= 15:
+                    high -= 3
+                    low -= 2
+                elif popularity <= -12:
+                    low += 2
+                    high += 5
+                capacity = rng.randint(max(4, low), max(max(4, low), high))
             elif is_hot_required and rng.random() < 0.65:
                 capacity = rng.randint(30, 60)
             else:
@@ -559,7 +642,7 @@ def generate_course_sections(
                     "teacher_id": teacher_id,
                     "teacher_name": f"Prof {teacher_id[1:]}",
                     "capacity": capacity,
-                    "time_slot": generate_time_slot(rng, credit, spec.category),
+                    "time_slot": generate_time_slot(rng, credit, spec.category, slot_counts),
                     "credit": credit,
                     "category": spec.category,
                     "is_required": "true" if spec.is_public_required else "false",
@@ -584,22 +667,35 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
             for spec in by_category["MajorCore"]
             if spec.profile_tags == (profile_id,)
         ][:3]
+        if len(profile_specific_required) < 3:
+            for spec in by_category["MajorElective"]:
+                if profile_id in spec.profile_tags and spec.course_code not in profile_specific_required:
+                    profile_specific_required.append(spec.course_code)
+                if len(profile_specific_required) >= 3:
+                    break
+        if len(profile_specific_required) < 3:
+            for spec in by_category["MajorCore"][2:]:
+                if spec.course_code not in profile_specific_required:
+                    profile_specific_required.append(spec.course_code)
+                if len(profile_specific_required) >= 3:
+                    break
         major_required = common_major + profile_specific_required
         strong_electives = [
             spec.course_code
             for spec in by_category["MajorElective"]
-            if profile_id in spec.profile_tags
+            if profile_id in spec.profile_tags and spec.course_code not in profile_specific_required
         ][:3]
         optional_targets = [by_category["GeneralElective"][0].course_code, by_category["PE"][0].course_code]
-        for code in common_required + major_required:
-            priority = "degree_blocking" if code in major_required[:3] else "progress_blocking"
+        required_codes = common_required + major_required
+        deadline_by_code = required_deadline_terms(required_codes)
+        for code in required_codes:
             rows.append(
                 {
                     "profile_id": profile_id,
                     "course_code": code,
                     "requirement_type": "required",
-                    "requirement_priority": priority,
-                    "deadline_term": "current",
+                    "requirement_priority": "normal",
+                    "deadline_term": deadline_by_code[code],
                 }
             )
         for code in strong_electives:
@@ -609,7 +705,7 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
                     "course_code": code,
                     "requirement_type": "strong_elective_requirement",
                     "requirement_priority": "normal",
-                    "deadline_term": "current",
+                    "deadline_term": "senior",
                 }
             )
         for code in optional_targets:
@@ -619,10 +715,50 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
                     "course_code": code,
                     "requirement_type": "optional_target",
                     "requirement_priority": "low",
-                    "deadline_term": "current",
+                    "deadline_term": "graduation_term",
                 }
             )
     return rows
+
+
+def required_deadline_terms(required_codes: list[str]) -> dict[str, str]:
+    if not required_codes:
+        return {}
+    if len(required_codes) >= 10:
+        deadlines = [
+            "freshman",
+            "freshman",
+            "sophomore",
+            "sophomore",
+            "junior",
+            "junior",
+            "senior",
+            "senior",
+            "graduation_term",
+            "graduation_term",
+        ]
+    else:
+        deadlines = [GRADE_STAGES[round(index * (len(GRADE_STAGES) - 1) / max(1, len(required_codes) - 1))] for index in range(len(required_codes))]
+    return {code: deadlines[min(index, len(deadlines) - 1)] for index, code in enumerate(required_codes)}
+
+
+def priority_for_student_requirement(requirement_type: str, deadline_term: str, grade_stage: str) -> str:
+    if requirement_type == "strong_elective_requirement":
+        return "normal"
+    if requirement_type == "optional_target":
+        return "low"
+    if requirement_type != "required":
+        return "normal"
+    stage_index = {stage: index for index, stage in enumerate(GRADE_STAGES)}
+    grade_index = stage_index.get(grade_stage, stage_index["sophomore"])
+    deadline_index = stage_index.get(deadline_term, grade_index)
+    if deadline_index == grade_index:
+        return "degree_blocking"
+    if deadline_index == grade_index + 1:
+        return "progress_blocking"
+    if grade_stage == "graduation_term" and deadline_term == "senior":
+        return "progress_blocking"
+    return "normal"
 
 
 def generate_requirements(students: list[dict], profile_requirements: list[dict]) -> list[dict]:
@@ -632,14 +768,20 @@ def generate_requirements(students: list[dict], profile_requirements: list[dict]
     rows: list[dict] = []
     for student in students:
         profile_id = str(student["profile_id"])
+        grade_stage = str(student.get("grade_stage", student.get("grade", "sophomore")))
         for item in requirements_by_profile[profile_id]:
+            deadline_term = str(item.get("deadline_term", "current"))
             rows.append(
                 {
                     "student_id": student["student_id"],
                     "course_code": item["course_code"],
                     "requirement_type": item["requirement_type"],
-                    "requirement_priority": item["requirement_priority"],
-                    "deadline_term": item.get("deadline_term", "current"),
+                    "requirement_priority": priority_for_student_requirement(
+                        str(item["requirement_type"]),
+                        deadline_term,
+                        grade_stage,
+                    ),
+                    "deadline_term": deadline_term,
                     "substitute_group_id": "",
                     "notes": f"Generated from {profile_id}",
                 }
@@ -696,10 +838,11 @@ def generate_utility_edges(
     for requirement in requirements:
         req_codes_by_student[str(requirement["student_id"])].add(str(requirement["course_code"]))
 
-    rows: list[dict] = []
+    rows_by_student: dict[str, list[dict]] = defaultdict(list)
     for student in students:
         student_id = str(student["student_id"])
         profile = str(student["profile_id"])
+        grade_stage = str(student.get("grade_stage", "junior"))
         required_codes = req_codes_by_student[student_id]
         category_affinity = student_category_affinity(rng, profile)
         block_affinity = student_time_affinity(rng)
@@ -721,15 +864,97 @@ def generate_utility_edges(
                 + min(15, profile_relevance)
                 + rng.gauss(0, 4)
             )
-            rows.append(
+            rows_by_student[student_id].append(
                 {
                     "student_id": student_id,
                     "course_id": course_id,
-                    "eligible": "true",
+                    "eligible": "true"
+                    if is_course_eligible_for_student(rng, profile, grade_stage, spec, str(course["course_code"]) in required_codes, len(courses))
+                    else "false",
                     "utility": clamp(utility),
                 }
             )
+        normalize_eligible_counts(rows_by_student[student_id], courses, required_codes)
+
+    rows: list[dict] = []
+    for student in students:
+        rows.extend(rows_by_student[str(student["student_id"])])
     return rows
+
+
+def is_course_eligible_for_student(
+    rng: random.Random,
+    profile_id: str,
+    grade_stage: str,
+    spec: CourseCodeSpec,
+    is_requirement: bool,
+    course_count: int,
+) -> bool:
+    if course_count <= 20:
+        return True
+    if is_requirement:
+        return True
+    if spec.category in {"Foundation", "English", "PE"}:
+        return True
+    if spec.category == "GeneralElective":
+        return rng.random() < 0.95
+    grade_index = {stage: index for index, stage in enumerate(GRADE_STAGES)}.get(grade_stage, 2)
+    profile_related = profile_id in spec.profile_tags
+    if spec.category == "MajorCore":
+        if len(spec.profile_tags) > 1:
+            return True
+        if profile_related:
+            return rng.random() < (0.88 if grade_index <= 1 else 0.98)
+        return rng.random() < (0.18 + 0.08 * max(0, grade_index - 1))
+    if spec.category == "MajorElective":
+        if profile_related:
+            return rng.random() < (0.72 if grade_index <= 1 else 0.94)
+        return rng.random() < (0.14 + 0.07 * max(0, grade_index - 1))
+    if spec.category == "LabSeminar":
+        if profile_related:
+            return rng.random() < (0.62 if grade_index <= 1 else 0.9)
+        return rng.random() < (0.10 + 0.05 * max(0, grade_index - 1))
+    return True
+
+
+def eligible_count_bounds(course_count: int) -> tuple[int, int]:
+    if course_count <= 20:
+        return course_count, course_count
+    if course_count >= 150:
+        return 80, min(140, course_count)
+    return min(45, course_count), min(70, course_count)
+
+
+def normalize_eligible_counts(rows: list[dict], courses: list[dict], required_codes: set[str]) -> None:
+    course_by_id = {str(course["course_id"]): course for course in courses}
+    lower, upper = eligible_count_bounds(len(courses))
+
+    def eligible_count() -> int:
+        return sum(1 for row in rows if str(row["eligible"]).lower() == "true")
+
+    if eligible_count() < lower:
+        candidates = [row for row in rows if str(row["eligible"]).lower() != "true"]
+        candidates.sort(key=lambda row: float(row["utility"]), reverse=True)
+        for row in candidates:
+            row["eligible"] = "true"
+            if eligible_count() >= lower:
+                break
+    if eligible_count() > upper:
+        candidates = []
+        for row in rows:
+            course = course_by_id[str(row["course_id"])]
+            if str(row["eligible"]).lower() != "true":
+                continue
+            if str(course["course_code"]) in required_codes:
+                continue
+            if str(course["category"]) in {"Foundation", "English", "PE"}:
+                continue
+            candidates.append(row)
+        candidates.sort(key=lambda row: float(row["utility"]))
+        for row in candidates:
+            row["eligible"] = "false"
+            if eligible_count() <= upper:
+                break
 
 
 def summarize_time_blocks(courses: list[dict]) -> dict[str, int]:
@@ -790,6 +1015,14 @@ def summarize_profile_requirements(profile_requirements: list[dict]) -> dict[str
     return {profile_id: dict(counter) for profile_id, counter in sorted(summary.items())}
 
 
+def summarize_profile_required_deadlines(profile_requirements: list[dict]) -> dict[str, dict[str, int]]:
+    summary: dict[str, Counter[str]] = defaultdict(Counter)
+    for requirement in profile_requirements:
+        if str(requirement["requirement_type"]) == "required":
+            summary[str(requirement["profile_id"])][str(requirement.get("deadline_term", ""))] += 1
+    return {profile_id: dict(counter) for profile_id, counter in sorted(summary.items())}
+
+
 def validate_medium_dataset(
     dataset: dict[str, object],
     *,
@@ -825,12 +1058,11 @@ def validate_medium_dataset(
     profile_id_set = set(profile_ids)
 
     profile_required_sets: dict[str, set[str]] = defaultdict(set)
-    profile_requirement_lookup: set[tuple[str, str, str, str, str]] = set()
+    profile_requirement_lookup: set[tuple[str, str, str, str]] = set()
     for requirement in profile_requirements:
         profile_id = str(requirement["profile_id"])
         course_code = str(requirement["course_code"])
         requirement_type = str(requirement["requirement_type"])
-        requirement_priority = str(requirement["requirement_priority"])
         deadline_term = str(requirement.get("deadline_term", "current"))
         if profile_id not in profile_id_set:
             errors.append(f"profile_requirement references unknown profile {profile_id}")
@@ -838,7 +1070,7 @@ def validate_medium_dataset(
             errors.append(f"profile_requirement references unknown course_code {course_code}")
         if requirement_type == "required":
             profile_required_sets[profile_id].add(course_code)
-        profile_requirement_lookup.add((profile_id, course_code, requirement_type, requirement_priority, deadline_term))
+        profile_requirement_lookup.add((profile_id, course_code, requirement_type, deadline_term))
     for profile_id in profile_id_set:
         if len(profile_required_sets[profile_id]) < 3:
             errors.append(f"profile {profile_id} must have at least 3 required course_codes")
@@ -865,8 +1097,29 @@ def validate_medium_dataset(
 
     time_counts = summarize_time_blocks(courses)
     total_sessions = sum(time_counts.values())
-    if total_sessions and time_counts.get("5-6", 0) / total_sessions > 0.06:
-        errors.append("5-6 lunch slot share exceeds 6%")
+    lunch_count_by_day: Counter[str] = Counter()
+    day_counts: Counter[str] = Counter()
+    day_block_counts: Counter[str] = Counter()
+    for course in courses:
+        for fragment in str(course["time_slot"]).split("|"):
+            day, start, end = fragment.split("-")
+            block = f"{start}-{end}"
+            day_counts[day] += 1
+            day_block_counts[fragment] += 1
+            if block == LUNCH_BLOCK:
+                lunch_count_by_day[day] += 1
+                if str(course["category"]) not in LUNCH_ALLOWED_CATEGORIES:
+                    errors.append(f"lunch slot used by core/non-lunch category course {course['course_id']}")
+    if total_sessions and time_counts.get("5-6", 0) / total_sessions > 0.04:
+        errors.append("5-6 lunch slot share exceeds 4% hard cap")
+    if total_sessions and expected_course_sections >= 80 and time_counts.get("5-6", 0) / total_sessions > 0.03:
+        errors.append("5-6 lunch slot share exceeds 3% target for medium-scale datasets")
+    if expected_course_sections >= 80 and lunch_count_by_day and max(lunch_count_by_day.values()) > 3:
+        errors.append("5-6 lunch slots are too concentrated on one weekday")
+    if total_sessions and expected_course_sections >= 80 and max(day_counts.values(), default=0) / total_sessions > 0.25:
+        errors.append("weekday time-slot distribution is too concentrated")
+    if total_sessions and expected_course_sections >= 80 and max(day_block_counts.values(), default=0) / total_sessions > 0.09:
+        errors.append("single day-block time-slot distribution is too concentrated")
     if time_counts.get("11-12", 0) < 5 and (not total_sessions or time_counts.get("11-12", 0) / total_sessions < 0.02):
         errors.append("11-12 slot is too sparse")
 
@@ -876,8 +1129,8 @@ def validate_medium_dataset(
         extra_keys = set(row) - allowed_edge_keys
         if extra_keys:
             errors.append(f"utility edge has unexpected fields {sorted(extra_keys)}")
-        if str(row["eligible"]).lower() != "true":
-            errors.append(f"{preset_name} preset must emit eligible=true for every edge: {row}")
+        if str(row["eligible"]).lower() not in {"true", "false"}:
+            errors.append(f"utility edge eligible must be true/false: {row}")
         key = (str(row["student_id"]), str(row["course_id"]))
         if key in seen_edges:
             errors.append(f"duplicate utility edge {key}")
@@ -898,20 +1151,27 @@ def validate_medium_dataset(
         profile_by_student[student_id] = profile_id
     course_by_id = {str(course["course_id"]): course for course in courses}
     eligible_by_student = Counter(str(row["student_id"]) for row in utilities if str(row["eligible"]).lower() == "true")
+    lower_eligible, upper_eligible = eligible_count_bounds(len(courses))
     for student_id in student_ids:
         count = eligible_by_student[student_id]
-        if count != len(courses):
-            errors.append(f"eligible count for {student_id} must equal all course sections ({len(courses)}), got {count}")
+        if not lower_eligible <= count <= upper_eligible:
+            errors.append(
+                f"eligible count for {student_id} must be {lower_eligible}-{upper_eligible} for {len(courses)} course sections, got {count}"
+            )
     expected_edge_count = len(students) * len(courses)
     if len(utilities) != expected_edge_count:
         errors.append(f"{preset_name} preset must emit full utility edge table: expected {expected_edge_count}, got {len(utilities)}")
 
     edge_course_codes: dict[tuple[str, str], set[str]] = defaultdict(set)
+    course_sections_by_code: dict[str, list[dict]] = defaultdict(list)
+    for course in courses:
+        course_sections_by_code[str(course["course_code"])].append(course)
     for row in utilities:
         student_id = str(row["student_id"])
         course = course_by_id.get(str(row["course_id"]))
         if course:
-            edge_course_codes[(student_id, str(course["course_code"]))].add(str(course["course_id"]))
+            if str(row["eligible"]).lower() == "true":
+                edge_course_codes[(student_id, str(course["course_code"]))].add(str(course["course_id"]))
     for requirement in requirements:
         student_id = str(requirement["student_id"])
         course_code = str(requirement["course_code"])
@@ -928,11 +1188,41 @@ def validate_medium_dataset(
             profile_id,
             course_code,
             str(requirement["requirement_type"]),
-            str(requirement["requirement_priority"]),
             str(requirement.get("deadline_term", "current")),
         )
         if derived_key not in profile_requirement_lookup:
             errors.append(f"student requirement {student_id}/{course_code} is not derived from profile_requirements")
+
+    high_pressure_by_student: dict[str, list[str]] = defaultdict(list)
+    high_pressure_credit_by_student: dict[str, float] = defaultdict(float)
+    high_pressure_codes: set[str] = set()
+    for requirement in requirements:
+        if (
+            str(requirement["requirement_type"]) == "required"
+            and str(requirement["requirement_priority"]) in HIGH_PRESSURE_PRIORITIES
+        ):
+            student_id = str(requirement["student_id"])
+            course_code = str(requirement["course_code"])
+            high_pressure_by_student[student_id].append(course_code)
+            high_pressure_codes.add(course_code)
+            sections = course_sections_by_code.get(course_code, [])
+            if sections:
+                high_pressure_credit_by_student[student_id] += min(float(section["credit"]) for section in sections)
+    if expected_course_sections >= 80:
+        for student_id in student_ids:
+            high_pressure_count = len(high_pressure_by_student[student_id])
+            if not 4 <= high_pressure_count <= 6:
+                errors.append(f"student {student_id} should have 4-6 high-pressure required courses, got {high_pressure_count}")
+            if high_pressure_credit_by_student[student_id] > 24:
+                errors.append(
+                    f"student {student_id} high-pressure required min credits should leave elective room, got "
+                    f"{round(high_pressure_credit_by_student[student_id], 4)}"
+                )
+    for course in courses:
+        if str(course["course_code"]) in high_pressure_codes and LUNCH_BLOCK in {
+            "-".join(fragment.split("-")[1:]) for fragment in str(course["time_slot"]).split("|")
+        }:
+            errors.append(f"high-pressure required course section {course['course_id']} uses lunch slot")
 
     quality_summary = {
         "time_block_distribution": time_counts,
@@ -941,6 +1231,17 @@ def validate_medium_dataset(
         "eligible_count_summary": summarize_eligible_counts(students, utilities),
         "profile_requirement_summary": summarize_profile_requirements(profile_requirements),
         "utility_summary": summarize_utilities(utilities, courses),
+        "lunch_summary": {
+            "count": time_counts.get("5-6", 0),
+            "share": round(time_counts.get("5-6", 0) / total_sessions, 4) if total_sessions else 0.0,
+            "by_weekday": dict(sorted(lunch_count_by_day.items())),
+        },
+        "high_pressure_required_summary": {
+            "count_min": min((len(values) for values in high_pressure_by_student.values()), default=0),
+            "count_max": max((len(values) for values in high_pressure_by_student.values()), default=0),
+            "credit_min": round(min(high_pressure_credit_by_student.values()), 4) if high_pressure_credit_by_student else 0.0,
+            "credit_max": round(max(high_pressure_credit_by_student.values()), 4) if high_pressure_credit_by_student else 0.0,
+        },
         "error_count": len(errors),
     }
     if errors:
@@ -997,7 +1298,7 @@ def build_synthetic_dataset(seed: int, shape: GenerationShape) -> dict[str, obje
             "preset": shape.preset,
             "seed": seed,
             "effective_seed": effective_seed,
-            "generator_version": 1,
+            "generator_version": 2,
             "n_students": len(students),
             "n_course_sections": len(courses),
             "n_course_codes": len({str(course["course_code"]) for course in courses}),
@@ -1005,6 +1306,7 @@ def build_synthetic_dataset(seed: int, shape: GenerationShape) -> dict[str, obje
             "profile_requirement_count": len(profile_requirements),
             "profiles": profiles,
             "profile_requirements_summary": summarize_profile_requirements(profile_requirements),
+            "profile_required_deadline_summary": summarize_profile_required_deadlines(profile_requirements),
             "quality_check_summary": quality_summary,
         }
         return dataset
@@ -1093,7 +1395,7 @@ def default_output_dir_for_preset(preset: str, seed: int, shape: GenerationShape
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic MVP all-pay data.")
     parser.add_argument("--config", default="configs/simple_model.yaml")
-    parser.add_argument("--preset", default="smoke", choices=["smoke", "medium", "custom"])
+    parser.add_argument("--preset", default="smoke", choices=["smoke", "medium", "catalog_stress", "legacy_40x200", "custom"])
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--n-students", type=int, default=None)
@@ -1106,9 +1408,9 @@ def main() -> None:
     shape: GenerationShape | None = None
     if args.preset == "smoke":
         dataset = build_smoke_dataset(seed)
-    elif args.preset == "medium":
-        dataset = build_medium_dataset(seed)
-        shape = build_shape("medium")
+    elif args.preset in {"medium", "catalog_stress", "legacy_40x200"}:
+        shape = build_shape(args.preset)
+        dataset = build_synthetic_dataset(seed, shape)
     else:
         shape = build_shape("custom", args.n_students, args.n_course_sections, args.n_profiles)
         dataset = build_synthetic_dataset(seed, shape)

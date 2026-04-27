@@ -14,6 +14,7 @@ from src.data_generation.generate_synthetic_mvp import (
     build_shape,
     write_dataset,
 )
+from src.data_generation.audit_synthetic_dataset import audit_rows
 from src.data_generation.io import (
     load_courses,
     load_requirements,
@@ -22,6 +23,7 @@ from src.data_generation.io import (
     resolve_data_paths,
     validate_dataset,
 )
+from src.student_agents.context import derive_requirement_penalties
 
 
 class MediumDatasetGenerationTests(unittest.TestCase):
@@ -36,10 +38,10 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         course_codes = {course["course_code"] for course in courses}
         self.assertGreaterEqual(len(profiles), 3)
         self.assertLessEqual(len(profiles), 5)
-        self.assertEqual(len(students), 40)
-        self.assertEqual(len(courses), 200)
-        self.assertGreaterEqual(len(course_codes), 110)
-        self.assertLessEqual(len(course_codes), 140)
+        self.assertEqual(len(students), 100)
+        self.assertEqual(len(courses), 80)
+        self.assertGreaterEqual(len(course_codes), 45)
+        self.assertLessEqual(len(course_codes), 55)
 
     def test_profiles_and_profile_requirements_are_consistent(self) -> None:
         profiles = self.dataset["profiles"]
@@ -63,7 +65,6 @@ class MediumDatasetGenerationTests(unittest.TestCase):
                 requirement["profile_id"],
                 requirement["course_code"],
                 requirement["requirement_type"],
-                requirement["requirement_priority"],
                 requirement["deadline_term"],
             )
             for requirement in self.dataset["profile_requirements"]
@@ -74,10 +75,36 @@ class MediumDatasetGenerationTests(unittest.TestCase):
                 profile_by_student[requirement["student_id"]],
                 requirement["course_code"],
                 requirement["requirement_type"],
-                requirement["requirement_priority"],
                 requirement["deadline_term"],
             )
             self.assertIn(key, profile_lookup)
+
+    def test_required_deadlines_and_student_pressure_are_grade_layered(self) -> None:
+        required_deadlines = {
+            requirement["deadline_term"]
+            for requirement in self.dataset["profile_requirements"]
+            if requirement["requirement_type"] == "required"
+        }
+        self.assertGreaterEqual(len(required_deadlines), 4)
+        self.assertNotEqual(required_deadlines, {"current"})
+
+        high_pressure_by_student: dict[str, list[str]] = {}
+        courses_by_code: dict[str, list[dict]] = {}
+        for course in self.dataset["courses"]:
+            courses_by_code.setdefault(course["course_code"], []).append(course)
+        for requirement in self.dataset["requirements"]:
+            if requirement["requirement_type"] == "required" and requirement["requirement_priority"] in {
+                "degree_blocking",
+                "progress_blocking",
+            }:
+                high_pressure_by_student.setdefault(requirement["student_id"], []).append(requirement["course_code"])
+
+        for student in self.dataset["students"]:
+            high_pressure_codes = high_pressure_by_student.get(student["student_id"], [])
+            self.assertGreaterEqual(len(high_pressure_codes), 4)
+            self.assertLessEqual(len(high_pressure_codes), 6)
+            min_credits = sum(min(float(section["credit"]) for section in courses_by_code[code]) for code in high_pressure_codes)
+            self.assertLessEqual(min_credits, 24.0)
 
     def test_credits_are_half_point_values_in_range(self) -> None:
         for course in self.dataset["courses"]:
@@ -99,19 +126,28 @@ class MediumDatasetGenerationTests(unittest.TestCase):
                 self.assertNotIn(block, {"1-4", "3-6", "7-10"})
                 session_blocks.append(block)
         lunch_share = session_blocks.count("5-6") / len(session_blocks)
-        self.assertLessEqual(lunch_share, 0.06)
+        self.assertLessEqual(lunch_share, 0.03)
         self.assertTrue(session_blocks.count("11-12") >= 5 or session_blocks.count("11-12") / len(session_blocks) >= 0.02)
+        for course in self.dataset["courses"]:
+            if course["category"] in {"Foundation", "English", "MajorCore"}:
+                self.assertNotIn("5-6", str(course["time_slot"]))
 
-    def test_all_students_are_eligible_for_all_course_sections(self) -> None:
+    def test_medium_uses_broad_but_not_universal_eligibility(self) -> None:
         courses_by_id = {course["course_id"]: course for course in self.dataset["courses"]}
         eligible_by_student: dict[str, set[str]] = {}
+        ineligible_count = 0
         for edge in self.dataset["utilities"]:
-            self.assertEqual(edge["eligible"], "true")
-            eligible_by_student.setdefault(edge["student_id"], set()).add(edge["course_id"])
+            self.assertIn(edge["eligible"], {"true", "false"})
+            if edge["eligible"] == "true":
+                eligible_by_student.setdefault(edge["student_id"], set()).add(edge["course_id"])
+            else:
+                ineligible_count += 1
         self.assertEqual(len(self.dataset["utilities"]), len(self.dataset["students"]) * len(self.dataset["courses"]))
+        self.assertGreater(ineligible_count, 0)
         for student in self.dataset["students"]:
             count = len(eligible_by_student[student["student_id"]])
-            self.assertEqual(count, len(self.dataset["courses"]))
+            self.assertGreaterEqual(count, 45)
+            self.assertLessEqual(count, 70)
 
         for requirement in self.dataset["requirements"]:
             student_id = requirement["student_id"]
@@ -121,6 +157,16 @@ class MediumDatasetGenerationTests(unittest.TestCase):
                 for course_id in eligible_by_student[student_id]
             }
             self.assertIn(course_code, eligible_codes)
+
+        cross_category_counts = []
+        for student in self.dataset["students"]:
+            student_id = student["student_id"]
+            eligible_categories = {
+                courses_by_id[course_id]["category"]
+                for course_id in eligible_by_student[student_id]
+            }
+            cross_category_counts.append(len(eligible_categories))
+        self.assertTrue(all(count >= 5 for count in cross_category_counts))
 
     def test_utility_edges_are_scalar_only(self) -> None:
         expected_fields = {"student_id", "course_id", "eligible", "utility"}
@@ -159,8 +205,30 @@ class MediumDatasetGenerationTests(unittest.TestCase):
             edges = load_utility_edges(root / "student_course_utility_edges.csv")
             requirements = load_requirements(root / "student_course_code_requirements.csv")
             validate_dataset(students, courses, edges, requirements)
-            self.assertEqual(len(students), 40)
-            self.assertEqual(len(courses), 200)
+            self.assertEqual(len(students), 100)
+            self.assertEqual(len(courses), 80)
+            penalties = derive_requirement_penalties(students, edges, requirements)
+            pressures = []
+            for student_id in students:
+                pressures.append(sum(penalties.get((student_id, requirement.course_code), 0.0) for requirement in requirements if requirement.student_id == student_id))
+            self.assertGreater(len({round(value, 4) for value in pressures}), 1)
+
+    def test_audit_rows_passes_medium_dataset(self) -> None:
+        result = audit_rows(
+            self.dataset["students"],
+            self.dataset["profiles"],
+            self.dataset["profile_requirements"],
+            self.dataset["courses"],
+            self.dataset["requirements"],
+            self.dataset["utilities"],
+        )
+        self.assertTrue(result["passed"], result["errors"])
+        self.assertLessEqual(result["summary"]["time"]["lunch_share"], 0.03)
+        pressure = result["summary"]["competition_pressure"]
+        self.assertGreaterEqual(pressure["predicted_overloaded_section_count"], 10)
+        self.assertGreaterEqual(pressure["high_pressure_required_overloaded_section_count"], 3)
+        self.assertGreaterEqual(pressure["predicted_admission_rate_proxy"], 0.75)
+        self.assertLessEqual(pressure["predicted_admission_rate_proxy"], 0.92)
 
     def test_student_source_can_be_configured_for_custom_output_dir(self) -> None:
         paths = resolve_data_paths(
@@ -192,6 +260,7 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertEqual(dataset["metadata"]["n_students"], 10)
         self.assertEqual(dataset["metadata"]["n_course_sections"], 20)
         self.assertEqual(dataset["metadata"]["profile_count"], 3)
+        self.assertIn("profile_required_deadline_summary", dataset["metadata"])
 
     def test_custom_default_output_dir_uses_scale_and_seed(self) -> None:
         shape = build_shape("custom", n_students=10, n_course_sections=20, n_profiles=3)

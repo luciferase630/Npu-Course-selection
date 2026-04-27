@@ -42,6 +42,74 @@ def parse_json_object(content: str) -> dict:
     return parsed
 
 
+def normalize_decision_explanation(value: object) -> str:
+    """Return a compact text representation of a model-supplied decision basis."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value).strip()
+
+
+def extract_decision_explanation(parsed_output: object, raw_content: str | None = None) -> str:
+    if not isinstance(parsed_output, dict):
+        parsed_output = {}
+    for key in ("decision_explanation", "decision_basis", "explanation", "overall_reasoning"):
+        explanation = normalize_decision_explanation(parsed_output.get(key))
+        if explanation:
+            return explanation
+    if raw_content:
+        return extract_decision_explanation_from_raw(raw_content)
+    return ""
+
+
+def extract_decision_explanation_from_raw(raw_content: str) -> str:
+    decoder = json.JSONDecoder()
+    for key in ("decision_explanation", "decision_basis", "explanation", "overall_reasoning"):
+        for pattern in (f'"{key}"', f"'{key}'"):
+            key_index = raw_content.find(pattern)
+            if key_index < 0:
+                continue
+            colon_index = raw_content.find(":", key_index + len(pattern))
+            if colon_index < 0:
+                continue
+            value_start = colon_index + 1
+            while value_start < len(raw_content) and raw_content[value_start].isspace():
+                value_start += 1
+            try:
+                value, _end = decoder.raw_decode(raw_content[value_start:])
+            except json.JSONDecodeError:
+                continue
+            explanation = normalize_decision_explanation(value)
+            if explanation:
+                return explanation
+    return ""
+
+
+def _usage_value(usage: object, key: str) -> int:
+    if usage is None:
+        return 0
+    if isinstance(usage, dict):
+        value = usage.get(key, 0)
+    else:
+        value = getattr(usage, key, 0)
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _response_usage(response: object) -> dict:
+    usage = getattr(response, "usage", None)
+    return {
+        "prompt_tokens": _usage_value(usage, "prompt_tokens"),
+        "completion_tokens": _usage_value(usage, "completion_tokens"),
+        "total_tokens": _usage_value(usage, "total_tokens"),
+    }
+
+
 class OpenAICompatibleClient:
     def __init__(self) -> None:
         load_local_env()
@@ -86,8 +154,16 @@ class OpenAICompatibleClient:
         trace = []
         submit_rejected_count = 0
         last_request = None
+        final_decision_explanation = ""
+        explanation_count = 0
+        explanation_missing_count = 0
+        explanation_char_count_total = 0
+        explanation_char_count_max = 0
         request_char_count_total = 0
         request_char_count_max = 0
+        api_prompt_tokens = 0
+        api_completion_tokens = 0
+        api_total_tokens = 0
         for round_index in range(1, max_rounds + 1):
             request_char_count = sum(len(message.get("content", "")) for message in messages)
             request_char_count_total += request_char_count
@@ -98,6 +174,10 @@ class OpenAICompatibleClient:
                 response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content
+            usage = _response_usage(response)
+            api_prompt_tokens += usage["prompt_tokens"]
+            api_completion_tokens += usage["completion_tokens"]
+            api_total_tokens += usage["total_tokens"]
             if not content:
                 tool_request = {"tool_name": "__parse_error__", "arguments": {}, "error": "empty content"}
             else:
@@ -105,6 +185,14 @@ class OpenAICompatibleClient:
                     tool_request = parse_json_object(content)
                 except json.JSONDecodeError as exc:
                     tool_request = {"tool_name": "__parse_error__", "arguments": {}, "error": str(exc)}
+            decision_explanation = extract_decision_explanation(tool_request, content or "")
+            if decision_explanation:
+                explanation_count += 1
+                explanation_char_count_total += len(decision_explanation)
+                explanation_char_count_max = max(explanation_char_count_max, len(decision_explanation))
+                final_decision_explanation = decision_explanation
+            else:
+                explanation_missing_count += 1
             last_request = tool_request
             tool_name = str(tool_request.get("tool_name", ""))
             arguments = tool_request.get("arguments", {})
@@ -120,9 +208,12 @@ class OpenAICompatibleClient:
             if tool_name == "submit_bids" and tool_result.get("status") == "rejected":
                 submit_rejected_count += 1
             if tool_name == "submit_bids" and tool_result.get("status") == "accepted":
+                final_decision_explanation = decision_explanation
                 trace.append(
                     {
                         "round_index": round_index,
+                        "raw_model_content": content or "",
+                        "decision_explanation": decision_explanation,
                         "tool_request": tool_request,
                         "tool_result": tool_result,
                         "rounds_remaining": max_rounds - round_index,
@@ -137,14 +228,24 @@ class OpenAICompatibleClient:
                     "submit_rejected_count": submit_rejected_count,
                     "round_limit_reached": False,
                     "final_tool_request": last_request,
+                    "final_decision_explanation": final_decision_explanation,
+                    "explanation_count": explanation_count,
+                    "explanation_missing_count": explanation_missing_count,
+                    "explanation_char_count_total": explanation_char_count_total,
+                    "explanation_char_count_max": explanation_char_count_max,
                     "request_char_count_total": request_char_count_total,
                     "request_char_count_max": request_char_count_max,
+                    "api_prompt_tokens": api_prompt_tokens,
+                    "api_completion_tokens": api_completion_tokens,
+                    "api_total_tokens": api_total_tokens,
                 }
             rounds_remaining = max_rounds - round_index
             protocol_instruction = session.build_protocol_instruction(tool_name, tool_result, rounds_remaining)
             trace.append(
                 {
                     "round_index": round_index,
+                    "raw_model_content": content or "",
+                    "decision_explanation": decision_explanation,
                     "tool_request": tool_request,
                     "tool_result": tool_result,
                     "rounds_remaining": rounds_remaining,
@@ -173,8 +274,16 @@ class OpenAICompatibleClient:
             "submit_rejected_count": submit_rejected_count,
             "round_limit_reached": True,
             "final_tool_request": last_request,
+            "final_decision_explanation": final_decision_explanation,
+            "explanation_count": explanation_count,
+            "explanation_missing_count": explanation_missing_count,
+            "explanation_char_count_total": explanation_char_count_total,
+            "explanation_char_count_max": explanation_char_count_max,
             "request_char_count_total": request_char_count_total,
             "request_char_count_max": request_char_count_max,
+            "api_prompt_tokens": api_prompt_tokens,
+            "api_completion_tokens": api_completion_tokens,
+            "api_total_tokens": api_total_tokens,
             "error": f"tool interaction exceeded max_rounds={max_rounds}",
         }
 

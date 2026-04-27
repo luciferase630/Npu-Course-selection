@@ -27,6 +27,17 @@ DEFAULT_GRADE_LAMBDA_MULTIPLIERS = {
     "graduation_term": 1.8,
 }
 
+GRADE_STAGE_ORDER = ["freshman", "sophomore", "junior", "senior", "graduation_term"]
+
+DEFAULT_DEADLINE_MULTIPLIERS = {
+    "past_far": 0.45,
+    "past_recent": 0.75,
+    "current": 1.25,
+    "next": 1.0,
+    "future": 0.55,
+    "legacy_current": 1.0,
+}
+
 
 def split_time_slots(time_slot: str) -> set[str]:
     return {slot.strip() for slot in str(time_slot).split("|") if slot.strip()}
@@ -103,6 +114,7 @@ def derive_requirement_penalties(
 ) -> dict[tuple[str, str], float]:
     penalty_config = (config or {}).get("requirement_penalty_model", {})
     priority_weights = penalty_config.get("priority_weights", DEFAULT_PRIORITY_WEIGHTS)
+    deadline_multipliers = penalty_config.get("deadline_multipliers", DEFAULT_DEADLINE_MULTIPLIERS)
     values = [edge.utility for edge in edges.values() if edge.eligible]
     p50 = median(values) if values else 0.0
     p75 = percentile(values, 0.75)
@@ -117,8 +129,34 @@ def derive_requirement_penalties(
         else:
             base = p50 * 0.5
         weight = float(priority_weights.get(requirement.requirement_priority, 1.0))
-        result[(requirement.student_id, requirement.course_code)] = round(base * weight, 4)
+        deadline_weight = deadline_multiplier_for_student(
+            student.grade_stage,
+            requirement.deadline_term,
+            deadline_multipliers,
+        )
+        result[(requirement.student_id, requirement.course_code)] = round(base * weight * deadline_weight, 4)
     return result
+
+
+def deadline_multiplier_for_student(grade_stage: str, deadline_term: str, multipliers: dict | None = None) -> float:
+    values = multipliers or DEFAULT_DEADLINE_MULTIPLIERS
+    if not deadline_term or deadline_term == "current":
+        return float(values.get("legacy_current", 1.0))
+    stage_index = {stage: index for index, stage in enumerate(GRADE_STAGE_ORDER)}
+    if grade_stage not in stage_index or deadline_term not in stage_index:
+        return 1.0
+    distance = stage_index[deadline_term] - stage_index[grade_stage]
+    if distance == 0:
+        bucket = "current"
+    elif distance == 1:
+        bucket = "next"
+    elif distance > 1:
+        bucket = "future"
+    elif distance == -1:
+        bucket = "past_recent"
+    else:
+        bucket = "past_far"
+    return float(values.get(bucket, DEFAULT_DEADLINE_MULTIPLIERS[bucket]))
 
 
 def derive_state_dependent_lambda(

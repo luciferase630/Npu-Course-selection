@@ -1,5 +1,15 @@
 # 数据表结构约定
 
+## 2026-04-27 Competitive Medium Schema Note
+
+This note supersedes older `eligible=all` wording in this schema.
+
+- Primary `medium` data now targets `100 students x 80 course sections x 4 profiles`.
+- `student_course_utility_edges.csv` remains a complete edge table, but `eligible` may be `true` or `false`.
+- `eligible` is administrative application permission, not a major-match score. Broad cross-profile enrollment remains possible, while some advanced major/lab/seminar sections can be unavailable by grade stage or administrative rule.
+- Competitive `medium` should have about `45-70` eligible sections per student out of `80`; every required `course_code` must have at least one eligible section for that student.
+- Main experiment dynamics use `time_points_per_round=3`.
+
 第一阶段使用合成数据。所有表优先使用 CSV，字段名保持英文，中文含义在本文档中解释。
 
 核心数据口径：学生目标是最大化效用，因此主偏好数据不是“课程列表”，而是学生-课程班效用边表。
@@ -25,10 +35,10 @@
 | `profile_id` | 培养方案唯一标识 | `CS_2026` |
 | `course_code` | 课程代码 | `MATH101` |
 | `requirement_type` | 要求类型 | `required` / `strong_elective_requirement` / `optional_target` |
-| `requirement_priority` | 要求强度 | `degree_blocking` / `progress_blocking` / `normal` / `low` |
-| `deadline_term` | 最晚建议完成学期 | `current` |
+| `requirement_priority` | 培养方案默认强度；学生级表可按年级重算 | `normal` / `low` |
+| `deadline_term` | 最晚建议完成阶段 | `freshman` / `sophomore` / `junior` / `senior` / `graduation_term` |
 
-`student_course_code_requirements.csv` 应由 `students.csv.profile_id` 和 `profile_requirements.csv` 自动展开生成。不同 profile 应共享部分基础课，同时保留各自专业核心课差异。
+`profile_requirements.csv` 表示多年培养方案事实。`student_course_code_requirements.csv` 应由 `students.csv.profile_id` 和 `profile_requirements.csv` 自动展开生成，并可根据学生 `grade_stage` 与 `deadline_term` 派生本轮 `requirement_priority`。不同 profile 应共享部分基础课，同时保留各自专业核心课差异。
 
 ## students.csv
 
@@ -105,10 +115,10 @@
 | `course_code` | 课程代码 | `ENG101` |
 | `requirement_type` | 要求类型 | `required` / `strong_elective_requirement` / `optional_target` |
 | `requirement_priority` | 要求强度 | `degree_blocking` / `progress_blocking` / `normal` / `low` |
-| `deadline_term` | 最晚建议完成学期，可选 | `freshman_first_semester` |
+| `deadline_term` | 最晚建议完成阶段，可选 | `freshman` |
 | `substitute_group_id` | 替代课程组，可选 | `ENG_GROUP_1` |
 
-如果学生最终选中任一满足 `code(c)=course_code` 的教学班，则该课程代码视为完成。未完成惩罚 $\mu_{ik}$ 由统一的 `requirement_penalty_model` 根据 `requirement_type`、`requirement_priority`、`deadline_term`、`utility` 分布和豆子机会成本派生，不在本表中逐行手填。派生规则必须在配置中记录，并在实验中做敏感性分析。
+如果学生最终选中任一满足 `code(c)=course_code` 的教学班，则该课程代码视为完成。`required` 表示培养方案硬事实，不代表单轮必须修完全部 required；本轮压力由 `grade_stage`、`deadline_term` 和 `requirement_priority` 共同派生。未完成惩罚 $\mu_{ik}$ 由统一的 `requirement_penalty_model` 根据 `requirement_type`、`requirement_priority`、`deadline_term`、`utility` 分布和豆子机会成本派生，不在本表中逐行手填。派生规则必须在配置中记录，并在实验中做敏感性分析。
 
 ## course_conflicts.csv
 
@@ -133,7 +143,7 @@
 | `eligible` | 学校系统是否允许该学生申请该教学班 | `true` |
 | `utility` | 学生对该教学班的主观喜爱/吸引力 | `57` |
 
-`eligible` 是硬性申请资格，不是专业匹配程度。当前 `medium` 和 `custom` 数据集不建先修课或行政限制表，因此所有学生对所有教学班默认 `eligible=true`，输出完整边表。profile 只影响 `utility` 的专业相关性和 `student_course_code_requirements.csv` 的课程代码要求。
+`eligible` 是硬性申请资格，不是专业匹配程度。当前竞争性 `medium` 输出完整边表，但允许部分高阶专业、实验、研讨类 section 为 `eligible=false`；基础课、英语、体育和通识课应广泛开放。profile 只影响 `utility` 的专业相关性、课程代码要求，以及行政上合理的宽松可申请范围，不应成为“只能选本专业课”的硬墙。
 
 `utility` 是学生在选课开始前已经形成的主观喜爱程度，可能来自老师口碑、课程兴趣、给分传闻、时间偏好和朋友推荐。MVP 不拆解它的来源。课程学分、必修缺失惩罚、课程代码唯一约束、时间冲突和学分上限不写入这张边表，而是由 `courses.csv`、`students.csv`、`student_course_code_requirements.csv` 和可行课表约束处理。
 

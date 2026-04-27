@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from src.student_agents.context import split_time_slots
 
 
@@ -90,15 +92,46 @@ class MockLLMClient:
 
     def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
         trace = []
+        explanation_count = 0
+        explanation_char_count_total = 0
+        explanation_char_count_max = 0
+        final_decision_explanation = ""
 
-        def call(tool_name: str, arguments: dict | None = None) -> dict:
+        def call(tool_name: str, arguments: dict | None = None, explanation: str | None = None) -> dict:
+            nonlocal explanation_count, explanation_char_count_total, explanation_char_count_max, final_decision_explanation
+            explanation = explanation or f"Mock agent calls {tool_name} to gather facts or finalize a feasible bid plan."
+            tool_request = {
+                "tool_name": tool_name,
+                "arguments": arguments or {},
+                "decision_explanation": explanation,
+            }
             result = session.call_tool(tool_name, arguments or {})
-            trace.append({"round_index": len(trace) + 1, "tool_request": {"tool_name": tool_name, "arguments": arguments or {}}, "tool_result": result})
+            explanation_count += 1
+            explanation_char_count_total += len(explanation)
+            explanation_char_count_max = max(explanation_char_count_max, len(explanation))
+            final_decision_explanation = explanation
+            trace.append(
+                {
+                    "round_index": len(trace) + 1,
+                    "raw_model_content": json.dumps(tool_request, ensure_ascii=False),
+                    "decision_explanation": explanation,
+                    "tool_request": tool_request,
+                    "tool_result": result,
+                }
+            )
             return result
 
-        call("get_current_status")
-        required = call("list_required_sections", {"max_sections_per_requirement": 2})
-        top_courses = call("search_courses", {"sort_by": "utility", "max_results": 20})
+        call("get_current_status", explanation="Check current budget, credits, and draft before selecting courses.")
+        required = call(
+            "list_required_sections",
+            {"max_sections_per_requirement": 2},
+            "Review required course sections first so requirement pressure is visible.",
+        )
+        top_courses = call(
+            "search_courses",
+            {"sort_by": "utility", "max_results": 20},
+            "Browse high-utility sections to fill remaining feasible schedule space.",
+        )
 
         candidate_ids = []
         for requirement in required.get("requirements", []):
@@ -119,7 +152,11 @@ class MockLLMClient:
                 break
 
         if not selected:
-            submit = call("submit_bids", {"bids": []})
+            submit = call(
+                "submit_bids",
+                {"bids": []},
+                "No feasible candidate survived the mock checks, so submit an empty feasible plan.",
+            )
         else:
             details = [session.call_tool("get_course_details", {"course_id": course_id}) for course_id in selected]
             weights = [max(1.0, float(item.get("course", {}).get("utility", 1))) for item in details]
@@ -133,8 +170,16 @@ class MockLLMClient:
                     bid = budget - spent
                 spent += bid
                 bids.append({"course_id": course_id, "bid": bid})
-            call("check_schedule", {"bids": bids})
-            submit = call("submit_bids", {"bids": bids})
+            call(
+                "check_schedule",
+                {"bids": bids},
+                "Verify the selected sections and explicit bids before final submission.",
+            )
+            submit = call(
+                "submit_bids",
+                {"bids": bids},
+                "Submit the feasible mock plan: selected courses avoid conflicts and bids use the budget in proportion to utility.",
+            )
 
         return {
             "accepted": submit.get("status") == "accepted",
@@ -144,5 +189,15 @@ class MockLLMClient:
             "submit_rejected_count": 1 if submit.get("status") == "rejected" else 0,
             "round_limit_reached": len(trace) > max_rounds,
             "final_tool_request": trace[-1]["tool_request"] if trace else None,
+            "final_decision_explanation": final_decision_explanation,
+            "explanation_count": explanation_count,
+            "explanation_missing_count": 0,
+            "explanation_char_count_total": explanation_char_count_total,
+            "explanation_char_count_max": explanation_char_count_max,
+            "request_char_count_total": 0,
+            "request_char_count_max": 0,
+            "api_prompt_tokens": 0,
+            "api_completion_tokens": 0,
+            "api_total_tokens": 0,
             "error": "" if submit.get("status") == "accepted" else submit.get("error", "mock tool submit failed"),
         }

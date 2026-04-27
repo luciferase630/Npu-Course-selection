@@ -17,7 +17,7 @@ from src.data_generation.io import (
     validate_dataset,
     write_csv_rows,
 )
-from src.llm_clients.openai_client import build_llm_client
+from src.llm_clients.openai_client import build_llm_client, extract_decision_explanation
 from src.models import BidState, Course
 from src.student_agents.behavior_tags import count_behavior_tags, derive_behavior_tags
 from src.student_agents.context import (
@@ -72,6 +72,8 @@ def summarize_attempt(raw_output: object) -> dict:
     if not isinstance(raw_output, dict):
         return {"output_type": type(raw_output).__name__, "selected_count": 0, "total_bid": 0}
     bids = raw_output.get("bids")
+    if not isinstance(bids, list) and isinstance(raw_output.get("arguments"), dict):
+        bids = raw_output["arguments"].get("bids")
     if not isinstance(bids, list):
         return {"output_type": "dict", "selected_count": 0, "total_bid": 0, "note": "bids is not a list"}
     selected_items = []
@@ -83,7 +85,7 @@ def summarize_attempt(raw_output: object) -> dict:
         course_id = item.get("course_id")
         if course_id is not None:
             course_id_counts[str(course_id)] = course_id_counts.get(str(course_id), 0) + 1
-        selected = item.get("selected")
+        selected = normalize_bool(item.get("selected", True))
         bid = item.get("bid", 0)
         if isinstance(bid, int):
             total_bid += bid if selected else 0
@@ -502,6 +504,8 @@ def main() -> None:
 
     bid_events: list[dict] = []
     traces: list[dict] = []
+    decision_explanations: list[dict] = []
+    model_outputs: list[dict] = []
     json_failure_count = 0
     invalid_bid_count = 0
     over_budget_count = 0
@@ -516,6 +520,13 @@ def main() -> None:
     tool_round_limit_count = 0
     tool_request_char_count_total = 0
     tool_request_char_count_max = 0
+    llm_explanation_count = 0
+    llm_explanation_missing_count = 0
+    llm_explanation_char_count_total = 0
+    llm_explanation_char_count_max = 0
+    llm_api_prompt_tokens = 0
+    llm_api_completion_tokens = 0
+    llm_api_total_tokens = 0
     processed_decisions = 0
     total_decisions = time_points * len(student_ids)
 
@@ -564,6 +575,7 @@ def main() -> None:
             events = []
             attempts = []
             retry_feedback = None
+            model_decision_explanation = ""
             retry_config = config.get("llm_context", {})
             max_retries = int(retry_config.get("max_retries_on_invalid_output", 1))
             max_attempts = 1 if agent_type == "scripted_policy" else 1 + max(0, max_retries)
@@ -618,11 +630,22 @@ def main() -> None:
                     tool_request_char_count_max,
                     int(tool_result.get("request_char_count_max", 0)),
                 )
+                llm_explanation_count += int(tool_result.get("explanation_count", 0))
+                llm_explanation_missing_count += int(tool_result.get("explanation_missing_count", 0))
+                llm_explanation_char_count_total += int(tool_result.get("explanation_char_count_total", 0))
+                llm_explanation_char_count_max = max(
+                    llm_explanation_char_count_max,
+                    int(tool_result.get("explanation_char_count_max", 0)),
+                )
+                llm_api_prompt_tokens += int(tool_result.get("api_prompt_tokens", 0))
+                llm_api_completion_tokens += int(tool_result.get("api_completion_tokens", 0))
+                llm_api_total_tokens += int(tool_result.get("api_total_tokens", 0))
                 tool_submit_rejected_count += int(tool_result.get("submit_rejected_count", 0))
                 if tool_result.get("round_limit_reached"):
                     tool_round_limit_count += 1
                 raw_output = tool_result.get("final_tool_request")
                 attempts = tool_result.get("tool_trace", [])
+                model_decision_explanation = str(tool_result.get("final_decision_explanation", "") or "")
                 if tool_result.get("accepted"):
                     applied, apply_error, events = apply_decision(
                         student_id,
@@ -684,9 +707,20 @@ def main() -> None:
                             "attempt_index": attempt_index,
                             "retry_feedback": retry_feedback,
                             "raw_model_output": raw_output,
+                            "decision_explanation": extract_decision_explanation(raw_output),
                             "validation_result": {"valid": validation.valid and applied, "error": "" if applied else validation.error},
                         }
                     )
+                    explanation = extract_decision_explanation(raw_output)
+                    if explanation:
+                        model_decision_explanation = explanation
+                    if agent_type != "scripted_policy":
+                        if explanation:
+                            llm_explanation_count += 1
+                            llm_explanation_char_count_total += len(explanation)
+                            llm_explanation_char_count_max = max(llm_explanation_char_count_max, len(explanation))
+                        else:
+                            llm_explanation_missing_count += 1
                     if applied:
                         final_source = agent_type if attempt_index == 1 else f"{agent_type}_retry_success"
                         if attempt_index > 1:
@@ -713,6 +747,65 @@ def main() -> None:
                     constraint_violation_rejected_count += 1
                 else:
                     invalid_bid_count += 1
+
+            for attempt in attempts:
+                parsed_attempt_output = attempt.get("tool_request", attempt.get("raw_model_output"))
+                model_outputs.append(
+                    {
+                        "run_id": args.run_id,
+                        "experiment_group": args.experiment_group,
+                        "time_point": time_point,
+                        "decision_order": decision_order,
+                        "student_id": student_id,
+                        "agent_type": agent_type,
+                        "script_policy_name": args.script_policy if agent_type == "scripted_policy" else "",
+                        "interaction_mode": interaction_mode,
+                        "round_index": attempt.get("round_index", attempt.get("attempt_index")),
+                        "raw_model_content": attempt.get(
+                            "raw_model_content",
+                            json.dumps(parsed_attempt_output, ensure_ascii=False) if parsed_attempt_output is not None else "",
+                        ),
+                        "parsed_model_output": parsed_attempt_output,
+                        "decision_explanation": attempt.get(
+                            "decision_explanation",
+                            extract_decision_explanation(parsed_attempt_output),
+                        ),
+                        "tool_result_status": (
+                            attempt.get("tool_result", {}).get("status")
+                            if isinstance(attempt.get("tool_result"), dict)
+                            else ""
+                        ),
+                        "tool_result_feasible": (
+                            attempt.get("tool_result", {}).get("feasible")
+                            if isinstance(attempt.get("tool_result"), dict)
+                            else ""
+                        ),
+                        "protocol_instruction": attempt.get("protocol_instruction", ""),
+                        "validation_result": attempt.get("validation_result", {}),
+                        "final_output": final_source,
+                        "applied": applied,
+                    }
+                )
+
+            decision_explanations.append(
+                {
+                    "run_id": args.run_id,
+                    "experiment_group": args.experiment_group,
+                    "time_point": time_point,
+                    "decision_order": decision_order,
+                    "student_id": student_id,
+                    "agent_type": agent_type,
+                    "script_policy_name": args.script_policy if agent_type == "scripted_policy" else "",
+                    "interaction_mode": interaction_mode,
+                    "final_output": final_source,
+                    "applied": applied,
+                    "explanation_missing": not bool(model_decision_explanation),
+                    "explanation_char_count": len(model_decision_explanation),
+                    "model_decision_explanation": model_decision_explanation,
+                    "final_model_output": raw_output,
+                    "final_output_summary": summarize_attempt(raw_output),
+                }
+            )
 
             counts_before = current_counts
             for event in events:
@@ -770,6 +863,7 @@ def main() -> None:
                     "state_snapshot": snapshot,
                     "raw_model_output": raw_output,
                     "parsed_output": raw_output if applied else None,
+                    "model_decision_explanation": model_decision_explanation,
                     "validation_result": {"valid": applied, "error": "" if applied else validation.error},
                     "final_output": final_source,
                     "attempts": attempts,
@@ -963,6 +1057,17 @@ def main() -> None:
         "tool_round_limit_count": tool_round_limit_count,
         "tool_request_char_count_total": tool_request_char_count_total,
         "tool_request_char_count_max": tool_request_char_count_max,
+        "llm_explanation_count": llm_explanation_count,
+        "llm_explanation_missing_count": llm_explanation_missing_count,
+        "llm_explanation_char_count_total": llm_explanation_char_count_total,
+        "llm_explanation_char_count_max": llm_explanation_char_count_max,
+        "average_llm_explanation_chars": round(
+            llm_explanation_char_count_total / max(1, llm_explanation_count),
+            4,
+        ),
+        "llm_api_prompt_tokens": llm_api_prompt_tokens,
+        "llm_api_completion_tokens": llm_api_completion_tokens,
+        "llm_api_total_tokens": llm_api_total_tokens,
         "behavior_tag_counts": count_behavior_tags(bid_events),
         "elapsed_seconds": round(time.perf_counter() - started_at, 4),
     }
@@ -970,6 +1075,12 @@ def main() -> None:
     with (output_root / "llm_traces.jsonl").open("w", encoding="utf-8") as f:
         for trace in traces:
             f.write(json.dumps(trace, ensure_ascii=False) + "\n")
+    with (output_root / "llm_decision_explanations.jsonl").open("w", encoding="utf-8") as f:
+        for row in decision_explanations:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    with (output_root / "llm_model_outputs.jsonl").open("w", encoding="utf-8") as f:
+        for row in model_outputs:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
     print(f"Run complete: {output_root.resolve()}")
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from src.models import BidState, Course, CourseRequirement, Student, UtilityEdge
+from src.llm_clients.mock_client import MockLLMClient
 from src.student_agents.tool_env import StudentSession
 
 
@@ -194,6 +195,18 @@ class ToolEnvTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertIn("invalid_bid_items", result["conflict_summary"])
         self.assertEqual(result["must_fix"][0]["type"], "invalid_bid_items")
+
+    def test_mock_tool_interaction_records_raw_outputs_and_explanations(self) -> None:
+        session = make_session()
+        result = MockLLMClient().interact("system", session, max_rounds=10)
+        self.assertTrue(result["accepted"])
+        self.assertGreater(result["explanation_count"], 0)
+        self.assertIn("final_decision_explanation", result)
+        self.assertTrue(result["final_decision_explanation"])
+        first_round = result["tool_trace"][0]
+        self.assertIn("raw_model_content", first_round)
+        self.assertIn("decision_explanation", first_round)
+        self.assertIn("decision_explanation", first_round["tool_request"])
 
 
 if __name__ == "__main__":
