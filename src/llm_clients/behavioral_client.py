@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import random
+from collections import Counter
 
 from src.student_agents.behavioral import (
     BEHAVIORAL_CATEGORY_LIMITS,
     BehavioralProfile,
+    behavioral_adjusted_selection_score,
+    behavioral_candidate_passes_threshold,
     behavioral_spend_ratio,
     behavioral_target_course_count,
     sample_behavioral_profile,
@@ -30,6 +33,8 @@ class BehavioralAgentClient:
         profile = self._sample_profile(payload_student)
         rng = random.Random(stable_behavior_seed(self.base_seed + time_point * 7919, student_id))
         budget = int(state["budget_available"])
+        time_points_total = int(state.get("time_points_total", time_point + int(state.get("time_to_deadline", 0))))
+        time_pressure = time_point / max(1, time_points_total)
         course_states = {item["course_id"]: item for item in state["course_states"]}
         requirements = {item["course_code"]: item for item in private.get("course_code_requirements", [])}
         candidates = []
@@ -46,6 +51,8 @@ class BehavioralAgentClient:
                 crowding=crowding,
                 previous_selected=bool(current["previous_selected"]),
                 profile=profile,
+                credit=float(course["credit"]),
+                time_pressure=time_pressure,
                 rng=rng,
             )
             candidates.append((score, components, course, current, crowding))
@@ -56,23 +63,48 @@ class BehavioralAgentClient:
         selected_time_slots: set[str] = set()
         selected_credits = 0.0
         selected_rows = []
-        target_count = behavioral_target_course_count(payload_student, profile)
-        for score, components, course, current, crowding in candidates:
-            course_slots = split_time_slots(str(course["time_slot"]))
+        target_count = behavioral_target_course_count(payload_student, profile, time_point, time_points_total)
+        for pass_index in range(2):
+            while len(selected_rows) < target_count:
+                selected_categories = Counter(str(row[2]["category"]) for row in selected_rows)
+                ordered = sorted(
+                    candidates,
+                    key=lambda item: behavioral_adjusted_selection_score(
+                        float(item[0]),
+                        str(item[2]["category"]),
+                        selected_categories,
+                        profile,
+                    ),
+                    reverse=True,
+                )
+                progressed = False
+                for score, components, course, current, crowding in ordered:
+                    course_slots = split_time_slots(str(course["time_slot"]))
+                    if any(row[2]["course_id"] == course["course_id"] for row in selected_rows):
+                        continue
+                    if pass_index == 0 and selected_categories[str(course["category"])] >= BEHAVIORAL_CATEGORY_LIMITS.get(
+                        str(course["category"]),
+                        target_count,
+                    ):
+                        continue
+                    if not behavioral_candidate_passes_threshold(components, profile, relaxed=pass_index > 0):
+                        continue
+                    if course["course_code"] in selected_by_code:
+                        continue
+                    if selected_time_slots & course_slots:
+                        continue
+                    if selected_credits + float(course["credit"]) > float(private.get("credit_cap", 30)):
+                        continue
+                    selected_rows.append((score, components, course, crowding))
+                    selected_by_code.add(course["course_code"])
+                    selected_time_slots.update(course_slots)
+                    selected_credits += float(course["credit"])
+                    progressed = True
+                    break
+                if not progressed:
+                    break
             if len(selected_rows) >= target_count:
                 break
-            if course["course_code"] in selected_by_code:
-                continue
-            if selected_time_slots & course_slots:
-                continue
-            if selected_credits + float(course["credit"]) > float(private.get("credit_cap", 30)):
-                continue
-            selected_rows.append((score, components, course, crowding))
-            selected_by_code.add(course["course_code"])
-            selected_time_slots.update(course_slots)
-            selected_credits += float(course["credit"])
-
-        time_points_total = int(state.get("time_points_total", time_point + int(state.get("time_to_deadline", 0))))
         bid_by_course = self._allocate_bids(selected_rows, budget, profile, time_point, time_points_total)
         bids = []
         components_by_course = {course["course_id"]: (components, crowding) for _score, components, course, _current, crowding in candidates}
@@ -256,6 +288,8 @@ class BehavioralAgentClient:
                 crowding=crowding,
                 previous_selected=previous.selected,
                 profile=profile,
+                credit=course.credit,
+                time_pressure=session.time_point / max(1, session.time_points_total),
                 rng=rng,
             )
             rows.append(
@@ -275,24 +309,52 @@ class BehavioralAgentClient:
         return attended
 
     def _select_feasible_courses(self, session, scored_candidates: list[dict], profile) -> tuple[list[str], dict[str, dict]]:
-        target_count = behavioral_target_course_count(session.student, profile)
+        target_count = behavioral_target_course_count(
+            session.student,
+            profile,
+            session.time_point,
+            session.time_points_total,
+        )
         selected: list[str] = []
         selected_components: dict[str, dict] = {}
         for pass_index in range(2):
-            for item in scored_candidates:
-                course_id = item["course_id"]
-                if course_id in selected:
-                    continue
-                course = session.courses[course_id]
-                if pass_index == 0:
-                    existing = sum(1 for selected_id in selected if session.courses[selected_id].category == course.category)
-                    if existing >= BEHAVIORAL_CATEGORY_LIMITS.get(course.category, target_count):
+            while len(selected) < target_count:
+                selected_categories = Counter(session.courses[selected_id].category for selected_id in selected)
+                ordered = sorted(
+                    scored_candidates,
+                    key=lambda item: behavioral_adjusted_selection_score(
+                        float(item["score"]),
+                        session.courses[item["course_id"]].category,
+                        selected_categories,
+                        profile,
+                    ),
+                    reverse=True,
+                )
+                progressed = False
+                for item in ordered:
+                    course_id = item["course_id"]
+                    if course_id in selected:
                         continue
-                proposal = selected + [course_id]
-                check = session.call_tool("check_schedule", {"proposed_course_ids": proposal})
-                if check.get("feasible"):
-                    selected = proposal
-                    selected_components[course_id] = item
+                    course = session.courses[course_id]
+                    if pass_index == 0:
+                        existing = selected_categories[course.category]
+                        if existing >= BEHAVIORAL_CATEGORY_LIMITS.get(course.category, target_count):
+                            continue
+                    if not behavioral_candidate_passes_threshold(
+                        item["score_components"],
+                        profile,
+                        relaxed=pass_index > 0,
+                    ):
+                        continue
+                    proposal = selected + [course_id]
+                    check = session.call_tool("check_schedule", {"proposed_course_ids": proposal})
+                    if check.get("feasible"):
+                        selected = proposal
+                        selected_components[course_id] = item
+                        progressed = True
+                        break
+                if not progressed:
+                    break
                 if len(selected) >= target_count:
                     break
             if len(selected) >= target_count:
@@ -360,7 +422,12 @@ class BehavioralAgentClient:
             row["bid"] = bid_by_course.get(course_id, 0)
             selected_rows.append(row)
         return {
-            "target_count": behavioral_target_course_count(session.student, profile),
+            "target_count": behavioral_target_course_count(
+                session.student,
+                profile,
+                session.time_point,
+                session.time_points_total,
+            ),
             "attention_window_size": len(scored_candidates),
             "attention_window_top": [course_context(item) for item in scored_candidates[:12]],
             "selected_courses": selected_rows,

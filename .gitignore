@@ -32,9 +32,7 @@ outputs/llm_traces/*
 # Generated processed data can be reproduced from raw/synthetic inputs
 data/processed/*
 !data/processed/README.md
-data/synthetic/*.csv
-data/synthetic/generation_metadata.json
-data/synthetic/n*_c*_p*_seed*/
+data/synthetic/*
 !data/synthetic/README.md
 
 # OS/editor noise
