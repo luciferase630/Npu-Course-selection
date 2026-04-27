@@ -133,6 +133,7 @@ def run_backtest(
     data_dir: str | None = None,
     seed_offset: int = 0,
     allocation_seed: int | None = None,
+    cass_policy: str = "cass_v2",
     results_table: str | Path = "outputs/tables/cass_focal_backtest_results.csv",
     bean_table: str | Path = "outputs/tables/cass_focal_backtest_bean_diagnostics.csv",
 ) -> dict[str, object]:
@@ -178,6 +179,7 @@ def run_backtest(
         previous_state=previous_state,
         time_point=time_points_total,
         time_points_total=time_points_total,
+        policy=cass_policy,
     )
     cass_decisions = build_cass_decisions(baseline_decisions, focal_student_id, cass.bids)
 
@@ -223,7 +225,7 @@ def run_backtest(
         "baseline_run_dir": str(baseline_dir),
         "data_dir": str(data_dir or paths["students"].parent),
         "focal_student_id": focal_student_id,
-        "policy": "cass_v1",
+        "policy": cass.policy,
         "background_fixed": True,
         "course_selection_fixed": False,
         "base_seed": base_seed,
@@ -333,6 +335,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--allocation-seed", type=int, default=None)
+    parser.add_argument(
+        "--cass-policy",
+        default="cass_v2",
+        choices=["cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_v2"],
+    )
     parser.add_argument("--results-table", default="outputs/tables/cass_focal_backtest_results.csv")
     parser.add_argument("--bean-table", default="outputs/tables/cass_focal_backtest_bean_diagnostics.csv")
     return parser.parse_args()
@@ -348,6 +355,7 @@ def main() -> None:
         data_dir=args.data_dir,
         seed_offset=args.seed_offset,
         allocation_seed=args.allocation_seed,
+        cass_policy=args.cass_policy,
         results_table=args.results_table,
         bean_table=args.bean_table,
     )
@@ -356,4 +364,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

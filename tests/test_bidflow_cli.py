@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from bidflow.agents import AgentContext, BaseAgent, BidDecision, build_agent, list_agents
@@ -67,6 +68,8 @@ class UnitExternalAgent(BaseAgent):
         decision.validate(context)
         self.assertTrue(decision.bids)
         self.assertLessEqual(sum(decision.bids.values()), 100)
+        upgraded = build_agent("cass", policy="cass_v2").decide(context)
+        self.assertEqual(upgraded.metadata["cass_policy_metrics"]["cass_policy"], "cass_v2")
 
     def test_cli_help_and_agent_list(self) -> None:
         help_result = self.run_cli("--help")
@@ -114,6 +117,8 @@ class UnitExternalAgent(BaseAgent):
                 "S001",
                 "--agent",
                 "cass",
+                "--policy",
+                "cass_frontier",
                 "--data-dir",
                 str(market_dir),
                 "--output",
@@ -122,3 +127,5 @@ class UnitExternalAgent(BaseAgent):
             self.assertEqual(replay.returncode, 0, replay.stderr)
             self.assertTrue((replay_dir / "cass_focal_backtest_metrics.json").exists())
             self.assertTrue((replay_dir / "bidflow_metadata.json").exists())
+            metrics = json.loads((replay_dir / "cass_focal_backtest_metrics.json").read_text(encoding="utf-8"))
+            self.assertEqual(metrics["policy"], "cass_frontier")

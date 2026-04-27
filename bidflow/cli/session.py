@@ -34,6 +34,11 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     run.add_argument("--interaction-mode", default="tool_based")
     run.add_argument("--formula-prompt", action="store_true")
     run.add_argument("--background-formula-share", type=float, default=0.0)
+    run.add_argument(
+        "--cass-policy",
+        default="cass_v2",
+        choices=["cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_v2"],
+    )
 
 
 def run(args: argparse.Namespace) -> int:
@@ -87,6 +92,8 @@ def run(args: argparse.Namespace) -> int:
         command.append("--formula-prompt")
     if args.background_formula_share:
         command.extend(["--background-formula-share", str(args.background_formula_share)])
+    if legacy_agent == "cass":
+        command.extend(["--cass-policy", str(args.cass_policy)])
     if args.seed is not None:
         command.extend(["--seed-offset", str(args.seed)])
     result = subprocess.run(command, check=False)
@@ -131,6 +138,7 @@ def _write_session_metadata(
         "interaction_mode": interaction_mode,
         "formula_prompt": bool(args.formula_prompt),
         "background_formula_share": float(args.background_formula_share),
+        "cass_policy": args.cass_policy if population.background_agent == "cass" or any(agent == "cass" for agent in population.focal_assignments.values()) else "",
         "experiment_config": experiment_config,
     }
     (output / "experiment.yaml").write_text(yaml.safe_dump(experiment, allow_unicode=True, sort_keys=False), encoding="utf-8")

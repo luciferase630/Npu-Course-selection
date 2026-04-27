@@ -14,7 +14,10 @@ class CASSAgent(BaseAgent):
     def decide(self, context: AgentContext) -> BidDecision:
         from src.llm_clients.cass_client import CASSAgentClient
 
-        client = CASSAgentClient(base_seed=int(self.config.get("base_seed", 20260425)))
+        client = CASSAgentClient(
+            base_seed=int(self.config.get("base_seed", 20260425)),
+            policy=str(self.config.get("policy", "cass_v2")),
+        )
         decision = decision_from_client_output(client.complete("", payload_for_context(context)))
         decision.validate(context)
         return decision

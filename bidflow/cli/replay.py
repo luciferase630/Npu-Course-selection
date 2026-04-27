@@ -20,6 +20,12 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     run.add_argument("--data-dir", default=None)
     run.add_argument("--config", default="configs/simple_model.yaml")
     run.add_argument("--formula-prompt", action="store_true")
+    run.add_argument(
+        "--policy",
+        default="cass_v2",
+        choices=["cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_v2"],
+        help="CASS policy variant when --agent cass.",
+    )
 
 
 def run(args: argparse.Namespace) -> int:
@@ -44,6 +50,7 @@ def run(args: argparse.Namespace) -> int:
             data_dir=args.data_dir,
             config_path=args.config,
             formula_prompt=args.formula_prompt,
+            cass_policy=args.policy,
         )
         _write_replay_metadata(output, args, agent)
         results.append({"agent": agent, "output": str(output), "course_outcome_delta": metrics.get("delta_course_outcome_utility")})
@@ -61,5 +68,6 @@ def _write_replay_metadata(output: Path, args: argparse.Namespace, agent: str) -
         "agent": agent,
         "data_dir": args.data_dir,
         "formula_prompt": bool(args.formula_prompt),
+        "policy": args.policy if agent == "cass" else "",
     }
     (output / "bidflow_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")

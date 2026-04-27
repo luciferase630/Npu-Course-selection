@@ -3,6 +3,38 @@
 > BidFlow sandbox is now available as a local CLI: `pip install -e .`, then run `bidflow --help`.
 > See `docs/sandbox_guide.md` for the install -> generate market -> run session -> replay -> analyze workflow.
 
+## 2026-04-28 更新：CASS-v2 已经比“公式”更有用
+
+我现在的态度更明确了：**我不支持把当前流行的投豆公式当成答案，但承认它有用。** 它有用的地方，是把拥挤程度变成一个可解释信号；它没解决的问题，是“选哪些课”和“值不值得为这门课多付”。
+
+新默认策略 `cass_v2` 不再使用粗糙的分段投豆函数，而是用连续响应：
+
+```text
+pressure = ratio^2 / (ratio^2 + 1.2)
+selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
+```
+
+也就是说：先估计这门课的竞争压力，再把课程价值和预计投豆成本放在一起比较。没竞争就少投，有竞争但价值不够就换课，有竞争且价值高才加码。
+
+在 `research_large` 及 medium / sparse-hotspots 背景上，`4` 个市场 × `4` 个 focal students 的 fixed-background replay 结果：
+
+| Policy | Avg utility | Beans | Rejected waste | Non-marginal beans |
+| --- | ---: | ---: | ---: | ---: |
+| CASS-v1 | 2182.95 | 61.50 | 8.31 | 50.50 |
+| `cass_value` | 2217.63 | 37.81 | 0.00 | 33.13 |
+| **CASS-v2** | **2262.39** | **51.13** | **2.50** | **42.19** |
+
+S048 online 验证也很直接：
+
+| Strategy | Market | Utility | Beans | Rejected waste |
+| --- | --- | ---: | ---: | ---: |
+| LLM + formula | pure BA | 1847.5 | 96 | 0 |
+| LLM + formula | mix30 | 1779.875 | 82 | 4 |
+| CASS-v2 | pure BA | 2081.75 | 75 | 20 |
+| `cass_value` | pure BA / mix30 | **2127.0** | **41** | **0** |
+
+所以当前结论是：公式是一个有用的信号，不是最终策略。CASS-v2 是默认强 baseline；`cass_value` 是更省豆、更“不当怨种”的单点强策略。完整记录见 `reports/interim/report_2026-04-28_cass_v2_policy_sweep.md`。
+
 这句话不是说某个具体学校或某个具体同学在骗人。它说的是一种很常见的幻觉：只要拿到一个“投豆公式”，学生就能在选课市场里稳定变强。
 
 我们做了一个可复现的仿真实验，结论更直接：

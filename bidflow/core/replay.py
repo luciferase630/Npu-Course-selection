@@ -16,6 +16,7 @@ def run_replay(
     data_dir: str | Path | None = None,
     config_path: str = "configs/simple_model.yaml",
     formula_prompt: bool = False,
+    cass_policy: str = "cass_v2",
 ) -> dict:
     if agent == "cass":
         return run_cass_backtest(
@@ -24,6 +25,7 @@ def run_replay(
             focal_student_id=focal_student_id,
             output_dir=output,
             data_dir=data_dir,
+            cass_policy=cass_policy,
         )
     if agent == "llm":
         return run_llm_backtest(

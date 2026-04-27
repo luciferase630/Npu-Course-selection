@@ -60,6 +60,24 @@ bidflow session run `
   --time-points 3
 ```
 
+CASS 现在支持多个策略版本：
+
+```powershell
+bidflow session run `
+  --market ./my_market `
+  --population "focal:S001=cass,background=behavioral" `
+  --cass-policy cass_v2 `
+  --output ./outputs/my_test
+```
+
+可选值：
+
+- `cass_v1`：旧分段策略，仅作为对照。
+- `cass_smooth`：连续出价曲线。
+- `cass_value`：强省豆版本，适合观察“别当怨种”的极限。
+- `cass_v2`：默认 balanced 策略，当前多市场回测平均 utility 最高。
+- `cass_frontier`：极端 value/bean frontier，对照用。
+
 当前 CLI 先委托旧 runner，所以旧 CSV schema 和旧输出结构仍然保留。新输出目录会额外包含：
 
 - `bidflow_metadata.json`
