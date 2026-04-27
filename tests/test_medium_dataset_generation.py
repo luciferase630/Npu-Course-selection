@@ -56,7 +56,7 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         for requirement in profile_requirements:
             if requirement["requirement_type"] == "required":
                 required_by_profile[requirement["profile_id"]].add(requirement["course_code"])
-        self.assertTrue(all(9 <= len(required_codes) <= 10 for required_codes in required_by_profile.values()))
+        self.assertTrue(all(len(required_codes) == 7 for required_codes in required_by_profile.values()))
         self.assertGreater(len({tuple(sorted(required_codes)) for required_codes in required_by_profile.values()}), 1)
         common_required = set.intersection(*required_by_profile.values())
         self.assertLessEqual(len(common_required), 4)
@@ -104,10 +104,10 @@ class MediumDatasetGenerationTests(unittest.TestCase):
 
         for student in self.dataset["students"]:
             high_pressure_codes = high_pressure_by_student.get(student["student_id"], [])
-            self.assertGreaterEqual(len(high_pressure_codes), 4)
-            self.assertLessEqual(len(high_pressure_codes), 6)
+            self.assertGreaterEqual(len(high_pressure_codes), 3)
+            self.assertLessEqual(len(high_pressure_codes), 4)
             min_credits = sum(min(float(section["credit"]) for section in courses_by_code[code]) for code in high_pressure_codes)
-            self.assertLessEqual(min_credits, 24.0)
+            self.assertLessEqual(min_credits, 20.0)
 
     def test_credits_are_half_point_values_in_range(self) -> None:
         for course in self.dataset["courses"]:
@@ -234,12 +234,18 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertLessEqual(pressure["predicted_admission_rate_proxy"], 0.92)
         demand_share = pressure["predicted_demand_share_by_category"]
         self.assertLessEqual(demand_share.get("Foundation", 0.0), 0.60)
+        self.assertGreaterEqual(demand_share.get("GeneralElective", 0.0), 0.08)
+        self.assertGreaterEqual(demand_share.get("PE", 0.0), 0.03)
         self.assertGreaterEqual(
             demand_share.get("MajorCore", 0.0) + demand_share.get("MajorElective", 0.0),
             0.25,
         )
         self.assertIn("MajorCore", pressure["top_overloaded_sections_by_category"])
         self.assertLessEqual(result["summary"]["requirements"]["profile_required_overlap"]["common_required_count"], 4)
+        for credits in result["summary"]["requirements"]["profile_required_credit"].values():
+            self.assertGreaterEqual(credits, 20)
+            self.assertLessEqual(credits, 27)
+            self.assertLess(credits, 30)
 
     def test_student_source_can_be_configured_for_custom_output_dir(self) -> None:
         paths = resolve_data_paths(

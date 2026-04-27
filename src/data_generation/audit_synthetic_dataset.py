@@ -70,7 +70,7 @@ def _requirement_boost(requirement: dict | None) -> float:
     elif requirement_type == "strong_elective_requirement":
         boost += 14.0
     elif requirement_type == "optional_target":
-        boost += 5.0
+        boost += 12.0
     return boost
 
 
@@ -306,15 +306,19 @@ def audit_rows(
     profile_requirement_counts: dict[str, Counter[str]] = defaultdict(Counter)
     required_deadlines: dict[str, Counter[str]] = defaultdict(Counter)
     required_codes_by_profile: dict[str, set[str]] = defaultdict(set)
+    required_credit_by_profile: dict[str, float] = defaultdict(float)
     for requirement in profile_requirements:
         profile_id = str(requirement.get("profile_id", ""))
+        course_code = str(requirement.get("course_code", ""))
         profile_requirement_counts[profile_id][str(requirement.get("requirement_type", ""))] += 1
         if str(requirement.get("requirement_type")) == "required":
             required_deadlines[profile_id][str(requirement.get("deadline_term", ""))] += 1
-            required_codes_by_profile[profile_id].add(str(requirement.get("course_code", "")))
+            required_codes_by_profile[profile_id].add(course_code)
+            if course_code in courses_by_code:
+                required_credit_by_profile[profile_id] += min(_float(course["credit"]) for course in courses_by_code[course_code])
         if profile_id not in profile_ids:
             errors.append(f"profile_requirements references unknown profile {profile_id}")
-        if str(requirement.get("course_code", "")) not in courses_by_code:
+        if course_code not in courses_by_code:
             errors.append(f"profile_requirements references unknown course_code {requirement.get('course_code')}")
     common_required_codes = (
         set.intersection(*(required_codes_by_profile[profile_id] for profile_id in profile_ids))
@@ -333,6 +337,16 @@ def audit_rows(
             "too many required course_codes are shared by every profile: "
             f"{len(common_required_codes)} > 4 ({sorted(common_required_codes)})"
         )
+    if len(courses) >= 80:
+        for profile_id in sorted(profile_ids):
+            required_count = len(required_codes_by_profile[profile_id])
+            required_credits = required_credit_by_profile[profile_id]
+            if required_count != 7:
+                errors.append(f"profile {profile_id} required count is {required_count}, expected 7")
+            if required_credits >= 30:
+                errors.append(f"profile {profile_id} required min credits {required_credits:.1f} must be below credit_cap 30")
+            if not 20 <= required_credits <= 27:
+                errors.append(f"profile {profile_id} required min credits {required_credits:.1f} should be about 22-25")
 
     high_pressure_by_student: dict[str, list[str]] = defaultdict(list)
     high_pressure_credit_by_student: dict[str, float] = defaultdict(float)
@@ -373,10 +387,10 @@ def audit_rows(
             student_id = str(student["student_id"])
             count = len(high_pressure_by_student[student_id])
             credits = high_pressure_credit_by_student[student_id]
-            if not 4 <= count <= 6:
-                errors.append(f"{student_id} high-pressure required count is {count}, expected 4-6")
-            if credits > 24:
-                errors.append(f"{student_id} high-pressure required credits are {credits:.1f}, expected <=24")
+            if not 3 <= count <= 4:
+                errors.append(f"{student_id} high-pressure required count is {count}, expected 3-4")
+            if credits > 20:
+                errors.append(f"{student_id} high-pressure required credits are {credits:.1f}, expected <=20")
             lower_eligible, upper_eligible = eligible_count_bounds(len(courses))
             eligible_count = eligible_counts[student_id]
             if not lower_eligible <= eligible_count <= upper_eligible:
@@ -428,6 +442,12 @@ def audit_rows(
             errors.append(f"Foundation predicted demand share is too dominant: {foundation_share:.4f}")
         if major_share < 0.25:
             errors.append(f"MajorCore + MajorElective predicted demand share is too weak: {major_share:.4f}")
+        general_share = float(demand_share.get("GeneralElective", 0.0))
+        pe_share = float(demand_share.get("PE", 0.0))
+        if general_share < 0.08:
+            errors.append(f"GeneralElective predicted demand share is too weak: {general_share:.4f}")
+        if pe_share < 0.03:
+            errors.append(f"PE predicted demand share is too weak: {pe_share:.4f}")
 
     high_pressure_counts = [len(high_pressure_by_student[str(student["student_id"])]) for student in students]
     high_pressure_credits = [high_pressure_credit_by_student[str(student["student_id"])] for student in students]
@@ -461,6 +481,10 @@ def audit_rows(
                     "common_required_count": len(common_required_codes),
                     "common_required_course_codes": sorted(common_required_codes),
                     "pairwise_required_overlap_counts": required_overlap_pairs,
+                },
+                "profile_required_credit": {
+                    profile_id: round(required_credit_by_profile[profile_id], 4)
+                    for profile_id in sorted(profile_ids)
                 },
                 "high_pressure_required_count_min": min(high_pressure_counts) if high_pressure_counts else 0,
                 "high_pressure_required_count_max": max(high_pressure_counts) if high_pressure_counts else 0,

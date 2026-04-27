@@ -59,7 +59,7 @@
 - `custom` 学生数、教学班数和 profile 数必须严格等于命令行参数；课程代码数由生成器派生，但不能小于满足所有 profile requirements 的最小课程代码数。
 - 每个 `course_code` 至少对应 1 个教学班。
 - 应存在一批多教学班课程代码。
-- 每个 profile 约关联 `9-10` 个多年培养方案 `required` course_code。
+- 每个 profile 必须关联 `7` 个多年培养方案 `required` course_code。
 
 ## 3. Profile 与 Requirements 检查
 
@@ -76,6 +76,8 @@ requirements 派生正确性：
 - `profile_requirements.csv` 的 required 集合表示多年培养方案事实；`student_course_code_requirements.csv.requirement_priority` 可以根据学生 `grade_stage` 和 `deadline_term` 动态派生。
 - 不同 profile 的 required course_code 集合应有可辨识差异，不能所有 profile 完全一样。
 - 全部 profile 共同 required course_code 应控制在 `3-4` 门左右。当前 medium 目标为 `FND001`、`ENG001`、`MCO001` 三门共同 required，其余 required 应按 profile 分化。
+- 每个 profile 的 required 最小学分总和应低于 `credit_cap=30`，目标约 `22-25`，确保学生还有选修空间。
+- MajorElective 不应被补入 required，应作为 strong elective 提供专业方向选择。
 - `student_course_code_requirements.csv` 不应包含手填惩罚数值字段，例如 `missing_required_penalty`。
 
 required 可满足性：
@@ -171,7 +173,7 @@ profile 作用检查：
 检查项：
 
 - 每个学生的完整教学班集合中，按 `time_slot` 统计分布。
-- 每个学生本轮高压力 required course_code 应控制在 `4-6` 门，最小学分总和应低于 `credit_cap` 并留出选修空间。
+- 每个学生本轮高压力 required course_code 应控制在 `3-4` 门，最小学分总和应低于 `credit_cap` 并留出选修空间。
 - 每个学生本轮高压力 required course_code 对应教学班不应全部集中在同一时间。
 - 对 medium 数据集，建议枚举每个学生高压力 required course_code 的 eligible 教学班组合，检查是否存在至少一组无时间冲突、无同代码重复的组合。
 

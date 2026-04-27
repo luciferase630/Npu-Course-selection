@@ -425,10 +425,10 @@ def build_course_code_specs(profiles: list[dict] | None = None, n_course_codes: 
                 tags = tuple(profile_ids)
                 public_required = True
             elif category == "MajorCore":
-                if index <= 2:
+                if index <= 1:
                     tags = tuple(profile_ids)
                 else:
-                    tags = (profile_ids[(index - 3) % len(profile_ids)],)
+                    tags = (profile_ids[(index - 2) % len(profile_ids)],)
                 public_required = index <= 15
             elif category == "MajorElective":
                 tags = (profile_ids[(index - 1) % len(profile_ids)],)
@@ -609,10 +609,10 @@ def generate_course_sections(
                     low, high = (18, 32)
                 else:
                     ranges = {
-                        "MajorElective": (8, 18),
-                        "GeneralElective": (5, 12),
-                        "PE": (5, 12),
-                        "LabSeminar": (5, 12),
+                        "MajorElective": (10, 20),
+                        "GeneralElective": (8, 16),
+                        "PE": (8, 16),
+                        "LabSeminar": (8, 16),
                     }
                     low, high = ranges[spec.category]
                 popularity = teacher_quality[teacher_id] + course_quality[spec.course_code]
@@ -668,27 +668,18 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
         profile_id = str(profile_row["profile_id"])
         profile_foundation: list[str] = []
         if foundation_pool:
-            for offset in range(min(2, len(foundation_pool))):
-                code = foundation_pool[(profile_index * 2 + offset) % len(foundation_pool)]
-                if code not in profile_foundation:
-                    profile_foundation.append(code)
+            profile_foundation.append(foundation_pool[profile_index % len(foundation_pool)])
 
         profile_major_required = [
             spec.course_code
             for spec in by_category["MajorCore"]
             if spec.profile_tags == (profile_id,)
         ][:3]
-        if len(profile_major_required) < 5:
-            for spec in by_category["MajorElective"]:
-                if profile_id in spec.profile_tags and spec.course_code not in profile_major_required:
-                    profile_major_required.append(spec.course_code)
-                if len(profile_major_required) >= 5:
-                    break
-        if len(profile_major_required) < 5:
+        if len(profile_major_required) < 3:
             for spec in by_category["MajorCore"][1:]:
                 if spec.course_code not in common_major and spec.course_code not in profile_major_required:
                     profile_major_required.append(spec.course_code)
-                if len(profile_major_required) >= 5:
+                if len(profile_major_required) >= 3:
                     break
 
         required_codes = []
@@ -696,24 +687,23 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
             *(common_foundation[:1]),
             *(profile_foundation[:1]),
             *(common_english[:1]),
-            *(profile_foundation[1:2]),
             *(common_major[:1]),
-            *profile_major_required[:5],
+            *profile_major_required[:3],
         ]:
             if code and code not in required_codes:
                 required_codes.append(code)
-        for spec in by_category["MajorElective"]:
-            if profile_id in spec.profile_tags and spec.course_code not in required_codes:
-                required_codes.append(spec.course_code)
-            if len(required_codes) >= 10:
-                break
 
         strong_electives = [
             spec.course_code
             for spec in by_category["MajorElective"]
             if profile_id in spec.profile_tags and spec.course_code not in required_codes
-        ][:3]
-        optional_targets = [by_category["GeneralElective"][0].course_code, by_category["PE"][0].course_code]
+        ]
+        optional_targets = []
+        general_electives = by_category["GeneralElective"]
+        for offset in range(min(2, len(general_electives))):
+            optional_targets.append(general_electives[(profile_index * 2 + offset) % len(general_electives)].course_code)
+        if by_category["PE"]:
+            optional_targets.append(by_category["PE"][profile_index % len(by_category["PE"])].course_code)
         deadline_by_code = required_deadline_terms(required_codes)
         for code in required_codes:
             rows.append(
@@ -821,10 +811,10 @@ def student_category_affinity(rng: random.Random, profile: str) -> dict[str, flo
         "Foundation": rng.uniform(-4, 5),
         "MajorCore": rng.uniform(0, 8),
         "MajorElective": rng.uniform(-2, 10),
-        "GeneralElective": rng.uniform(-5, 12),
+        "GeneralElective": rng.uniform(16, 30),
         "English": rng.uniform(-5, 5),
-        "PE": rng.uniform(-6, 8),
-        "LabSeminar": rng.uniform(-4, 6),
+        "PE": rng.uniform(4.5, 12.5),
+        "LabSeminar": rng.uniform(-7, 2),
     }
     if profile == "AI_2026":
         base["MajorElective"] += 2
@@ -1238,9 +1228,9 @@ def validate_medium_dataset(
     if expected_course_sections >= 80:
         for student_id in student_ids:
             high_pressure_count = len(high_pressure_by_student[student_id])
-            if not 4 <= high_pressure_count <= 6:
-                errors.append(f"student {student_id} should have 4-6 high-pressure required courses, got {high_pressure_count}")
-            if high_pressure_credit_by_student[student_id] > 24:
+            if not 3 <= high_pressure_count <= 4:
+                errors.append(f"student {student_id} should have 3-4 high-pressure required courses, got {high_pressure_count}")
+            if high_pressure_credit_by_student[student_id] > 20:
                 errors.append(
                     f"student {student_id} high-pressure required min credits should leave elective room, got "
                     f"{round(high_pressure_credit_by_student[student_id], 4)}"

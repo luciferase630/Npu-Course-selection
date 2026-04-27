@@ -123,8 +123,10 @@ SE_2026,MCO008,required,normal,junior
 
 - 不同 profile 只共享少量全校共同必修；当前 medium 目标为 `FND001`、`ENG001`、`MCO001` 三门共同 required。
 - 不同 profile 必须有各自的专业核心课，不能所有 profile 的 required 集合完全一样。
-- 每个 profile 的 `required` course_code 数量建议为 `9-10` 门；它表示多年培养方案必修集合，不表示本轮必须全部修完。
-- 可以为每个 profile 生成少量 `strong_elective_requirement` 和 `optional_target`。
+- 每个 profile 的 `required` course_code 数量为 `7` 门；它表示多年培养方案硬必修集合，不表示本轮必须全部修完。
+- `required` 结构为 3 门全校共同必修、1 门 profile-specific Foundation、3 门 profile-specific MajorCore。
+- MajorElective 不再补进 `required`；它们应作为 `strong_elective_requirement` 生成，保留学生的专业方向选择空间。
+- `optional_target` 目标为 3 门：2 门 GeneralElective 和 1 门 PE。
 - `deadline_term` 必须按 `freshman`、`sophomore`、`junior`、`senior`、`graduation_term` 分层，不能统一填 `current`。
 - 本表不手填未完成惩罚数值；惩罚仍由运行时 `requirement_penalty_model` 派生。
 
@@ -252,7 +254,7 @@ deadline_term,substitute_group_id,notes
 2. 读取 `profile_requirements.csv`，获得该 `profile_id` 对应的所有 requirements。
 3. 把这些 requirements 展开到 `student_course_code_requirements.csv`，并填入对应的 `student_id`。
 4. `requirement_type` 和 `deadline_term` 保持培养方案事实；`requirement_priority` 根据学生 `grade_stage` 与 `deadline_term` 派生。
-5. 对 medium，学生本轮高压力 required 目标为 `4-6` 门，最小学分总和应低于 `credit_cap` 并留出选修空间。
+5. 对 medium，学生本轮高压力 required 目标为 `3-4` 门，最小学分总和应低于 `credit_cap` 并留出选修空间。
 6. 因此 CS、SE、AI、MATH 等不同 profile 的学生会拥有不同课程代码要求，同一 profile 内不同年级也会有不同紧迫程度。
 
 可满足性硬要求：
@@ -317,7 +319,7 @@ utility = clamp(
   "n_course_sections": 80,
   "n_course_codes": 51,
   "profile_count": 4,
-  "profile_requirement_count": 51,
+  "profile_requirement_count": 52,
   "profile_requirement_summary": {},
   "time_block_distribution": {},
   "category_distribution": {},
