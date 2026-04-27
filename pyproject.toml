@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bidflow"
+version = "0.1.0"
+description = "CLI sandbox for all-pay course bidding experiments."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+  "PyYAML>=6.0.2",
+  "openai>=1.0.0",
+]
+
+[project.scripts]
+bidflow = "bidflow.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["bidflow*", "src*"]
