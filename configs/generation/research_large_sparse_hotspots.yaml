@@ -1,0 +1,27 @@
+name: research_large_sparse_hotspots
+version: 1
+output_dir: data/synthetic/research_large_sparse_hotspots
+competition_profile: sparse_hotspots
+shape:
+  preset: research_large
+  n_students: 800
+  n_course_sections: 240
+  n_profiles: 6
+  n_course_codes: 154
+catalog:
+  category_counts:
+    Foundation: 24
+    MajorCore: 42
+    MajorElective: 44
+    GeneralElective: 26
+    English: 6
+    PE: 6
+    LabSeminar: 6
+eligibility:
+  eligible_bounds: [120, 185]
+policies:
+  catalog: course_catalog_v1
+  requirements: profile_requirements_v1
+  capacity: research_large_sparse_hotspots_capacity_v1
+  eligibility: broad_admin_eligibility_v1
+  utility: profile_affinity_utility_v1

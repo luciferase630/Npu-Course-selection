@@ -1,0 +1,27 @@
+name: medium
+version: 1
+output_dir: data/synthetic
+competition_profile: high
+shape:
+  preset: medium
+  n_students: 100
+  n_course_sections: 80
+  n_profiles: 4
+  n_course_codes: 51
+catalog:
+  category_counts:
+    Foundation: 9
+    MajorCore: 13
+    MajorElective: 12
+    GeneralElective: 8
+    English: 3
+    PE: 3
+    LabSeminar: 3
+eligibility:
+  eligible_bounds: [45, 70]
+policies:
+  catalog: course_catalog_v1
+  requirements: profile_requirements_v1
+  capacity: capacity_profile_v1
+  eligibility: broad_admin_eligibility_v1
+  utility: profile_affinity_utility_v1

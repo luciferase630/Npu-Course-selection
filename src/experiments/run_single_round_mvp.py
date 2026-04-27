@@ -57,37 +57,74 @@ def build_agent_type_by_student(
     scripted_students: set[str],
     effective_agent: str,
     focal_student_id: str | None = None,
+    background_formula_students: set[str] | None = None,
+    focal_agent_type: str | None = None,
 ) -> dict[str, str]:
+    background_formula_students = background_formula_students or set()
+    focal_agent_type = focal_agent_type or "openai"
     if focal_student_id:
         return {
             student_id: (
                 "scripted_policy"
                 if student_id in scripted_students
-                else "openai"
+                else focal_agent_type
                 if student_id == focal_student_id
+                else "behavioral_formula"
+                if student_id in background_formula_students
                 else "behavioral"
             )
             for student_id in student_ids
         }
     return {
-        student_id: ("scripted_policy" if student_id in scripted_students else effective_agent)
+        student_id: (
+            "scripted_policy"
+            if student_id in scripted_students
+            else "behavioral_formula"
+            if student_id in background_formula_students
+            else effective_agent
+        )
         for student_id in student_ids
     }
+
+
+def select_background_formula_students(
+    student_ids: list[str],
+    share: float,
+    seed: int,
+    exclude_student_ids: set[str] | None = None,
+) -> set[str]:
+    if share <= 0:
+        return set()
+    excluded = exclude_student_ids or set()
+    candidates = [student_id for student_id in sorted(student_ids) if student_id not in excluded]
+    count = round(float(share) * len(candidates))
+    count = max(0, min(len(candidates), count))
+    rng = random.Random(seed + 3030)
+    shuffled = candidates[:]
+    rng.shuffle(shuffled)
+    return set(shuffled[:count])
 
 
 def validate_formula_runtime_args(args, interaction_mode: str, student_ids: list[str]) -> None:
     if args.focal_student_id and args.focal_student_id not in student_ids:
         raise SystemExit(f"--focal-student-id {args.focal_student_id} is not present in the dataset")
-    if args.focal_student_id and args.agent != "openai":
-        raise SystemExit("--focal-student-id is only supported with --agent openai")
+    if args.focal_student_id and args.agent not in {"openai", "cass"}:
+        raise SystemExit("--focal-student-id is only supported with --agent openai or --agent cass")
     if args.focal_student_id and interaction_mode != "tool_based":
         raise SystemExit("--focal-student-id is only supported with --interaction-mode tool_based")
     if args.focal_student_id and args.experiment_group != "E0_llm_natural_baseline":
         raise SystemExit("--focal-student-id currently requires E0_llm_natural_baseline")
     if args.formula_prompt and not args.focal_student_id:
         raise SystemExit("--formula-prompt requires --focal-student-id")
+    if args.formula_prompt and args.agent != "openai":
+        raise SystemExit("--formula-prompt is only supported with --agent openai")
     if args.formula_prompt and interaction_mode != "tool_based":
         raise SystemExit("--formula-prompt is only supported with --interaction-mode tool_based")
+    background_formula_share = float(getattr(args, "background_formula_share", 0.0) or 0.0)
+    if background_formula_share < 0.0 or background_formula_share > 1.0:
+        raise SystemExit("--background-formula-share must be between 0 and 1")
+    if background_formula_share and interaction_mode != "tool_based":
+        raise SystemExit("--background-formula-share requires --interaction-mode tool_based")
 
 
 def apply_data_dir_override(config: dict, data_dir: str | None) -> None:
@@ -436,9 +473,13 @@ def compute_utilities(
         completed_codes = {courses[course_id].course_code for course_id in admitted_courses}
         gross = sum(edges[(student_id, course_id)].utility for course_id in admitted_courses)
         unmet_penalty = 0.0
+        completed_requirement_value = 0.0
         for requirement in requirements_by_student.get(student_id, []):
-            if requirement.course_code not in completed_codes:
-                unmet_penalty += derived_penalties.get((student_id, requirement.course_code), 0.0)
+            requirement_value = derived_penalties.get((student_id, requirement.course_code), 0.0)
+            if requirement.course_code in completed_codes:
+                completed_requirement_value += requirement_value
+            else:
+                unmet_penalty += requirement_value
         credits = sum(courses[course_id].credit for course_id in admitted_courses)
         credit_cap_violation_count = 1 if credits > student.credit_cap else 0
         time_conflict_count = 0
@@ -452,11 +493,16 @@ def compute_utilities(
         state_lambda = lambda_by_student[student_id]
         beans_cost = state_lambda * beans_paid
         net = gross - unmet_penalty - beans_cost
+        course_outcome = gross + completed_requirement_value
         rows.append(
             {
                 "run_id": run_id,
                 "student_id": student_id,
                 "gross_liking_utility": round(gross, 4),
+                "completed_requirement_value": round(completed_requirement_value, 4),
+                "course_outcome_utility": round(course_outcome, 4),
+                "outcome_utility_per_bean": round(course_outcome / beans_paid, 4) if beans_paid else round(course_outcome, 4),
+                "remaining_requirement_risk": round(unmet_penalty, 4),
                 "state_dependent_bean_cost_lambda": round(state_lambda, 4),
                 "beans_cost": round(beans_cost, 4),
                 "unmet_required_penalty": round(unmet_penalty, 4),
@@ -465,6 +511,7 @@ def compute_utilities(
                 "time_conflict_violation_count": time_conflict_count,
                 "feasible_schedule_flag": str(feasible).lower(),
                 "net_total_utility": round(net, 4),
+                "legacy_net_total_utility": round(net, 4),
                 "utility_per_bean": round(net / beans_paid, 4) if beans_paid else round(net, 4),
             }
         )
@@ -519,6 +566,59 @@ def summarize_tool_trace(tool_trace: list[dict]) -> dict:
     }
 
 
+def compute_bean_diagnostics(
+    allocations: list,
+    budget_rows: list[dict],
+    student_ids: list[str],
+    agent_type_by_student: dict[str, str],
+) -> dict[str, object]:
+    rejected_by_student = {student_id: 0 for student_id in student_ids}
+    excess_by_student = {student_id: 0 for student_id in student_ids}
+    admitted_by_student = {student_id: 0 for student_id in student_ids}
+    applied_by_student = {student_id: 0 for student_id in student_ids}
+    for item in allocations:
+        applied_by_student[item.student_id] = applied_by_student.get(item.student_id, 0) + 1
+        if item.admitted:
+            admitted_by_student[item.student_id] = admitted_by_student.get(item.student_id, 0) + 1
+            excess_by_student[item.student_id] = excess_by_student.get(item.student_id, 0) + max(
+                0,
+                int(item.bid) - int(item.cutoff_bid or 0),
+            )
+        else:
+            rejected_by_student[item.student_id] = rejected_by_student.get(item.student_id, 0) + int(item.bid)
+    beans_by_student = {row["student_id"]: int(row["beans_paid"]) for row in budget_rows}
+
+    def summarize(ids: list[str]) -> dict[str, object]:
+        count = len(ids)
+        rejected_total = sum(rejected_by_student.get(student_id, 0) for student_id in ids)
+        excess_total = sum(excess_by_student.get(student_id, 0) for student_id in ids)
+        beans_total = sum(beans_by_student.get(student_id, 0) for student_id in ids)
+        admitted_total = sum(admitted_by_student.get(student_id, 0) for student_id in ids)
+        applied_total = sum(applied_by_student.get(student_id, 0) for student_id in ids)
+        non_marginal_total = rejected_total + excess_total
+        return {
+            "student_count": count,
+            "average_rejected_wasted_beans": round(rejected_total / max(1, count), 4),
+            "average_admitted_excess_bid_total": round(excess_total / max(1, count), 4),
+            "average_posthoc_non_marginal_beans": round(non_marginal_total / max(1, count), 4),
+            "average_beans_paid": round(beans_total / max(1, count), 4),
+            "rejected_waste_rate": round(rejected_total / max(1, beans_total), 4),
+            "admitted_excess_rate": round(excess_total / max(1, beans_total), 4),
+            "posthoc_non_marginal_rate": round(non_marginal_total / max(1, beans_total), 4),
+            "admission_rate": round(admitted_total / max(1, applied_total), 4),
+        }
+
+    by_agent_type = {}
+    for agent_type in sorted(set(agent_type_by_student.values())):
+        ids = [student_id for student_id in student_ids if agent_type_by_student.get(student_id) == agent_type]
+        by_agent_type[agent_type] = summarize(ids)
+    overall = summarize(student_ids)
+    return {
+        **{key: value for key, value in overall.items() if key != "student_count"},
+        "bean_diagnostics_by_agent_type": by_agent_type,
+    }
+
+
 def formula_course_context(
     course_ids: list[str],
     courses: dict[str, Course],
@@ -559,22 +659,42 @@ def compute_focal_metrics(
     focal_allocations = [item for item in allocations if item.student_id == focal_student_id]
     admitted = [item for item in focal_allocations if item.admitted]
     rejected = [item for item in focal_allocations if not item.admitted]
-    behavioral_values = [
+    behavioral_outcome_values = [
+        float(utility_by_student[student_id]["course_outcome_utility"])
+        for student_id in student_ids
+        if agent_type_by_student.get(student_id) == "behavioral" and student_id in utility_by_student
+    ]
+    behavioral_legacy_net_values = [
         float(utility_by_student[student_id]["net_total_utility"])
         for student_id in student_ids
         if agent_type_by_student.get(student_id) == "behavioral" and student_id in utility_by_student
     ]
+    focal_outcome = float(focal_utility.get("course_outcome_utility", 0.0) or 0.0)
     focal_net = float(focal_utility.get("net_total_utility", 0.0) or 0.0)
-    percentile = ""
-    if behavioral_values:
-        percentile = round(sum(1 for value in behavioral_values if value <= focal_net) / len(behavioral_values), 4)
+    outcome_percentile = ""
+    if behavioral_outcome_values:
+        outcome_percentile = round(
+            sum(1 for value in behavioral_outcome_values if value <= focal_outcome) / len(behavioral_outcome_values),
+            4,
+        )
+    legacy_net_percentile = ""
+    if behavioral_legacy_net_values:
+        legacy_net_percentile = round(
+            sum(1 for value in behavioral_legacy_net_values if value <= focal_net) / len(behavioral_legacy_net_values),
+            4,
+        )
     admitted_excess_bid_total = sum(
         max(0, int(item.bid) - int(item.cutoff_bid or 0))
         for item in admitted
     )
     return {
         "formula_focal_net_total_utility": focal_utility.get("net_total_utility", ""),
+        "formula_focal_legacy_net_total_utility": focal_utility.get("legacy_net_total_utility", ""),
         "formula_focal_gross_liking_utility": focal_utility.get("gross_liking_utility", ""),
+        "formula_focal_completed_requirement_value": focal_utility.get("completed_requirement_value", ""),
+        "formula_focal_course_outcome_utility": focal_utility.get("course_outcome_utility", ""),
+        "formula_focal_remaining_requirement_risk": focal_utility.get("remaining_requirement_risk", ""),
+        "formula_focal_outcome_utility_per_bean": focal_utility.get("outcome_utility_per_bean", ""),
         "formula_focal_utility_per_bean": focal_utility.get("utility_per_bean", ""),
         "formula_focal_beans_paid": focal_budget.get("beans_paid", ""),
         "formula_focal_selected_course_count": len(selected_bids),
@@ -582,7 +702,8 @@ def compute_focal_metrics(
         "formula_focal_rejected_wasted_beans": sum(int(item.bid) for item in rejected),
         "formula_focal_admitted_excess_bid_total": admitted_excess_bid_total,
         "formula_focal_bid_concentration_hhi": round(bid_hhi, 4),
-        "formula_focal_net_utility_percentile_among_behavioral": percentile,
+        "formula_focal_course_outcome_percentile_among_behavioral": outcome_percentile,
+        "formula_focal_net_utility_percentile_among_behavioral": legacy_net_percentile,
     }
 
 
@@ -591,7 +712,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run single-round all-pay MVP experiment.")
     parser.add_argument("--config", default="configs/simple_model.yaml")
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--agent", default="behavioral", choices=["behavioral", "mock", "openai"])
+    parser.add_argument("--agent", default="behavioral", choices=["behavioral", "mock", "openai", "cass"])
     parser.add_argument("--experiment-group", default="E0_llm_natural_baseline")
     parser.add_argument("--script-policy", default="utility_weighted")
     parser.add_argument("--seed-offset", type=int, default=0)
@@ -601,6 +722,9 @@ def main() -> None:
     parser.add_argument("--progress-interval", type=int, default=0)
     parser.add_argument("--focal-student-id", default=None)
     parser.add_argument("--formula-prompt", action="store_true")
+    parser.add_argument("--background-formula-share", type=float, default=0.0)
+    parser.add_argument("--background-formula-exclude-student-id", default=None)
+    parser.add_argument("--background-formula-policy", default="bid_allocation_v1", choices=["bid_allocation_v1"])
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -632,21 +756,40 @@ def main() -> None:
         scripted_students = select_scripted_students(student_ids, args.experiment_group, seed)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
+    background_formula_exclusions = set(scripted_students)
+    if args.focal_student_id:
+        background_formula_exclusions.add(args.focal_student_id)
+    if args.background_formula_exclude_student_id:
+        background_formula_exclusions.add(args.background_formula_exclude_student_id)
+    background_formula_students = select_background_formula_students(
+        student_ids,
+        float(args.background_formula_share),
+        seed,
+        background_formula_exclusions,
+    )
     agent_type_by_student = build_agent_type_by_student(
         student_ids,
         scripted_students,
         effective_agent,
         args.focal_student_id,
+        background_formula_students,
+        focal_agent_type=effective_agent,
     )
     try:
+        client_by_agent = {
+            agent_type: build_llm_client(agent_type, base_seed=seed)
+            for agent_type in sorted(set(agent_type_by_student.values()))
+            if agent_type != "scripted_policy"
+        }
         if args.focal_student_id:
-            client_by_agent = {
-                "openai": build_llm_client("openai", base_seed=seed),
-                "behavioral": build_llm_client("behavioral", base_seed=seed),
-            }
-            effective_agent = "focal_openai_background_behavioral"
-        else:
-            client_by_agent = {effective_agent: build_llm_client(requested_agent, base_seed=seed)}
+            focal_agent_type = agent_type_by_student.get(args.focal_student_id, effective_agent)
+            effective_agent = (
+                f"focal_{focal_agent_type}_background_mixed_behavioral_formula"
+                if background_formula_students
+                else f"focal_{focal_agent_type}_background_behavioral"
+            )
+        elif background_formula_students:
+            effective_agent = "mixed_behavioral_formula"
     except RuntimeError as exc:
         raise SystemExit(f"LLM client setup failed: {exc}") from None
     available_by_student = {
@@ -689,6 +832,16 @@ def main() -> None:
     llm_api_total_tokens = 0
     formula_metrics = empty_formula_metrics()
     formula_reconsideration_prompt_count = 0
+    background_formula_policy_application_count = 0
+    background_formula_policy_signal_count = 0
+    background_formula_policy_total_bid = 0
+    cass_policy_application_count = 0
+    cass_policy_total_bid = 0
+    cass_policy_unspent_budget_total = 0
+    cass_policy_one_bean_course_count = 0
+    cass_policy_selected_course_count = 0
+    cass_policy_required_selected_count = 0
+    cass_policy_tier_counts: Counter[str] = Counter()
     behavioral_profile_counts: Counter[str] = Counter()
     processed_decisions = 0
     total_decisions = time_points * len(student_ids)
@@ -836,6 +989,33 @@ def main() -> None:
                     tool_result.get("formula_metrics", empty_formula_metrics()),
                 )
                 formula_reconsideration_prompt_count += int(tool_result.get("formula_reconsideration_prompt_count", 0))
+                behavioral_formula_policy_metrics = tool_result.get("behavioral_formula_policy_metrics", {})
+                if isinstance(behavioral_formula_policy_metrics, dict) and behavioral_formula_policy_metrics:
+                    background_formula_policy_application_count += 1
+                    background_formula_policy_signal_count += int(
+                        behavioral_formula_policy_metrics.get("formula_signal_count", 0) or 0
+                    )
+                    background_formula_policy_total_bid += int(
+                        behavioral_formula_policy_metrics.get("formula_total_bid", 0) or 0
+                    )
+                cass_policy_metrics = tool_result.get("cass_policy_metrics", {})
+                if isinstance(cass_policy_metrics, dict) and cass_policy_metrics:
+                    cass_policy_application_count += 1
+                    cass_policy_total_bid += int(cass_policy_metrics.get("cass_total_bid", 0) or 0)
+                    cass_policy_unspent_budget_total += int(cass_policy_metrics.get("cass_unspent_budget", 0) or 0)
+                    cass_policy_one_bean_course_count += int(
+                        cass_policy_metrics.get("cass_one_bean_course_count", 0) or 0
+                    )
+                    cass_policy_selected_course_count += int(
+                        cass_policy_metrics.get("cass_selected_course_count", 0) or 0
+                    )
+                    cass_policy_required_selected_count += int(
+                        cass_policy_metrics.get("cass_required_selected_count", 0) or 0
+                    )
+                    tier_counts = cass_policy_metrics.get("cass_tier_counts", {})
+                    if isinstance(tier_counts, dict):
+                        for tier, count in tier_counts.items():
+                            cass_policy_tier_counts[str(tier)] += int(count or 0)
                 tool_submit_rejected_count += int(tool_result.get("submit_rejected_count", 0))
                 behavioral_profile = tool_result.get("behavioral_profile", {})
                 if isinstance(behavioral_profile, dict) and behavioral_profile.get("persona"):
@@ -1225,6 +1405,10 @@ def main() -> None:
             "run_id",
             "student_id",
             "gross_liking_utility",
+            "completed_requirement_value",
+            "course_outcome_utility",
+            "outcome_utility_per_bean",
+            "remaining_requirement_risk",
             "state_dependent_bean_cost_lambda",
             "beans_cost",
             "unmet_required_penalty",
@@ -1233,16 +1417,32 @@ def main() -> None:
             "time_conflict_violation_count",
             "feasible_schedule_flag",
             "net_total_utility",
+            "legacy_net_total_utility",
             "utility_per_bean",
         ],
         utilities,
     )
-    utilities_by_student = {row["student_id"]: float(row["net_total_utility"]) for row in utilities}
-    scripted_values = [utilities_by_student[student_id] for student_id in scripted_students if student_id in utilities_by_student]
+    legacy_utilities_by_student = {row["student_id"]: float(row["net_total_utility"]) for row in utilities}
+    outcome_by_student = {row["student_id"]: float(row["course_outcome_utility"]) for row in utilities}
+    scripted_values = [
+        legacy_utilities_by_student[student_id]
+        for student_id in scripted_students
+        if student_id in legacy_utilities_by_student
+    ]
     natural_values = [
-        utilities_by_student[student_id]
+        legacy_utilities_by_student[student_id]
         for student_id in student_ids
-        if student_id not in scripted_students and student_id in utilities_by_student
+        if student_id not in scripted_students and student_id in legacy_utilities_by_student
+    ]
+    scripted_outcome_values = [
+        outcome_by_student[student_id]
+        for student_id in scripted_students
+        if student_id in outcome_by_student
+    ]
+    natural_outcome_values = [
+        outcome_by_student[student_id]
+        for student_id in student_ids
+        if student_id not in scripted_students and student_id in outcome_by_student
     ]
     scripted_gap = ""
     if scripted_values and natural_values:
@@ -1250,7 +1450,15 @@ def main() -> None:
             sum(scripted_values) / len(scripted_values) - sum(natural_values) / len(natural_values),
             4,
         )
+    scripted_outcome_gap = ""
+    if scripted_outcome_values and natural_outcome_values:
+        scripted_outcome_gap = round(
+            sum(scripted_outcome_values) / len(scripted_outcome_values)
+            - sum(natural_outcome_values) / len(natural_outcome_values),
+            4,
+        )
     final_decision_metrics = compute_final_decision_metrics(final_decisions, student_ids)
+    bean_diagnostics = compute_bean_diagnostics(allocations, budget_rows, student_ids, agent_type_by_student)
     formula_alpha_count = int(formula_metrics.get("formula_alpha_count", 0) or 0)
     formula_metric_output = {
         **formula_metrics,
@@ -1279,12 +1487,41 @@ def main() -> None:
         "interaction_mode": interaction_mode,
         "formula_prompt_enabled": args.formula_prompt,
         "formula_focal_student_id": args.focal_student_id or "",
+        "background_formula_share_requested": round(float(args.background_formula_share), 4),
+        "background_formula_student_count": len(background_formula_students),
+        "background_plain_behavioral_student_count": sum(
+            1 for agent_type in agent_type_by_student.values() if agent_type == "behavioral"
+        ),
+        "background_formula_policy": args.background_formula_policy if background_formula_students else "",
+        "background_formula_student_ids": sorted(background_formula_students),
+        "agent_type_counts": dict(sorted(Counter(agent_type_by_student.values()).items())),
         "n_students": len(students),
         "n_courses": len(courses),
         "time_points": time_points,
         "scripted_agent_count": len(scripted_students),
         "scripted_agent_utility_gap": scripted_gap,
+        "scripted_agent_course_outcome_gap": scripted_outcome_gap,
         **final_decision_metrics,
+        "average_course_outcome_utility": round(
+            sum(float(row["course_outcome_utility"]) for row in utilities) / max(1, len(utilities)),
+            4,
+        ),
+        "average_completed_requirement_value": round(
+            sum(float(row["completed_requirement_value"]) for row in utilities) / max(1, len(utilities)),
+            4,
+        ),
+        "average_remaining_requirement_risk": round(
+            sum(float(row["remaining_requirement_risk"]) for row in utilities) / max(1, len(utilities)),
+            4,
+        ),
+        "average_outcome_utility_per_bean": round(
+            sum(float(row["outcome_utility_per_bean"]) for row in utilities) / max(1, len(utilities)),
+            4,
+        ),
+        "average_legacy_net_total_utility": round(
+            sum(float(row["legacy_net_total_utility"]) for row in utilities) / max(1, len(utilities)),
+            4,
+        ),
         "average_net_total_utility": round(
             sum(float(row["net_total_utility"]) for row in utilities) / max(1, len(utilities)), 4
         ),
@@ -1332,6 +1569,32 @@ def main() -> None:
         "llm_api_completion_tokens": llm_api_completion_tokens,
         "llm_api_total_tokens": llm_api_total_tokens,
         **formula_metric_output,
+        "background_formula_policy_application_count": background_formula_policy_application_count,
+        "background_formula_policy_signal_count": background_formula_policy_signal_count,
+        "background_formula_policy_total_bid": background_formula_policy_total_bid,
+        "cass_policy_application_count": cass_policy_application_count,
+        "cass_policy_average_total_bid": round(
+            cass_policy_total_bid / max(1, cass_policy_application_count),
+            4,
+        ),
+        "cass_policy_average_unspent_budget": round(
+            cass_policy_unspent_budget_total / max(1, cass_policy_application_count),
+            4,
+        ),
+        "cass_policy_average_one_bean_course_count": round(
+            cass_policy_one_bean_course_count / max(1, cass_policy_application_count),
+            4,
+        ),
+        "cass_policy_average_selected_course_count": round(
+            cass_policy_selected_course_count / max(1, cass_policy_application_count),
+            4,
+        ),
+        "cass_policy_average_required_selected_count": round(
+            cass_policy_required_selected_count / max(1, cass_policy_application_count),
+            4,
+        ),
+        "cass_policy_tier_counts": dict(sorted(cass_policy_tier_counts.items())),
+        **bean_diagnostics,
         **focal_metrics,
         "behavior_tag_counts": count_behavior_tags(bid_events),
         "behavioral_profile_counts": dict(sorted(behavioral_profile_counts.items())),

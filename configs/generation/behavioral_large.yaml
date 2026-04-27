@@ -1,0 +1,27 @@
+name: behavioral_large
+version: 1
+output_dir: data/synthetic/behavioral_large
+competition_profile: high
+shape:
+  preset: behavioral_large
+  n_students: 300
+  n_course_sections: 120
+  n_profiles: 4
+  n_course_codes: 77
+catalog:
+  category_counts:
+    Foundation: 16
+    MajorCore: 19
+    MajorElective: 18
+    GeneralElective: 12
+    English: 4
+    PE: 3
+    LabSeminar: 5
+eligibility:
+  eligible_bounds: [60, 95]
+policies:
+  catalog: course_catalog_v1
+  requirements: profile_requirements_v1
+  capacity: capacity_profile_v1
+  eligibility: broad_admin_eligibility_v1
+  utility: profile_affinity_utility_v1

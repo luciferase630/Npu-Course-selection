@@ -72,12 +72,21 @@ The platform must not automatically choose `alpha` or rewrite bids to match the 
 
 Focal-student primary metrics:
 
-- `net_total_utility`
+- `course_outcome_utility`
 - `gross_liking_utility`
+- `completed_requirement_value`
+- `remaining_requirement_risk`
 - `beans_paid`
-- `utility_per_bean`
+- `outcome_utility_per_bean`
 - `admission_rate`
 - `selected_course_count`
+
+`course_outcome_utility = gross_liking_utility + completed_requirement_value`
+is the primary focal outcome. Beans are a single-round use-it-or-lose-it
+budget, so `beans_paid` is reported as strategy cost / efficiency context, not
+subtracted from the main welfare metric. `remaining_requirement_risk` is the
+unfinished multi-year requirement risk, not a direct current-round failure
+penalty.
 
 Cost and overbidding metrics:
 
@@ -89,9 +98,10 @@ Cost and overbidding metrics:
 
 Relative-position metrics:
 
-- Focal student's `net_total_utility` percentile among behavioral students in the same run.
+- Focal student's `course_outcome_utility` percentile among behavioral students in the same run.
 - Focal formula run minus matched non-formula run.
 - Focal formula run minus behavioral mean in the same run.
+- Legacy `net_total_utility` percentile as a shadow-cost sensitivity metric.
 
 Formula-behavior metrics:
 
@@ -112,10 +122,17 @@ Use matched student-seed pairs as the unit of comparison.
 
 Required reports:
 
-- Paired mean difference for focal `net_total_utility`, `beans_paid`, `utility_per_bean`, and admission rate.
+- Paired mean difference for focal `course_outcome_utility`,
+  `gross_liking_utility`, `completed_requirement_value`, `beans_paid`,
+  `outcome_utility_per_bean`, and admission rate.
 - Bootstrap 95% confidence intervals for paired differences.
 - Effect size, not only p-value.
 - A paired permutation test when the number of matched pairs is small.
+
+Legacy `net_total_utility` remains reportable as a sensitivity appendix using
+the historical shadow-cost formula:
+`gross_liking_utility - unmet_required_penalty - beans_cost`. It should not be
+the headline strategy metric.
 
 Do not interpret a market-wide average change as the main result. The main result is whether the formula strategy improves or harms the focal students who receive it.
 

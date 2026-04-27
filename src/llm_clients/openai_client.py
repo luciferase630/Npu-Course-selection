@@ -496,6 +496,14 @@ def build_llm_client(agent: str, base_seed: int = 20260425):
         from src.llm_clients.behavioral_client import BehavioralAgentClient
 
         return BehavioralAgentClient(base_seed=base_seed)
+    if agent == "behavioral_formula":
+        from src.llm_clients.behavioral_client import BehavioralFormulaAgentClient
+
+        return BehavioralFormulaAgentClient(base_seed=base_seed)
+    if agent == "cass":
+        from src.llm_clients.cass_client import CASSAgentClient
+
+        return CASSAgentClient(base_seed=base_seed)
     if agent == "openai":
         return OpenAICompatibleClient()
     raise ValueError(f"Unsupported agent: {agent}")

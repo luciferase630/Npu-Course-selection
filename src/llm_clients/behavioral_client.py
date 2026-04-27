@@ -16,6 +16,7 @@ from src.student_agents.behavioral import (
     stable_behavior_seed,
 )
 from src.student_agents.context import split_time_slots
+from src.student_agents.formula_bid_policy import AlphaPolicy, FormulaBidAllocator
 
 
 class BehavioralAgentClient:
@@ -459,6 +460,68 @@ class BehavioralAgentClient:
             spent += bid
             bids[str(course_id)] = bid
         return bids
+
+
+class BehavioralFormulaAgentClient(BehavioralAgentClient):
+    """Behavioral course selection with formula-based bid allocation."""
+
+    def __init__(self, base_seed: int = 20260425, policy: str = "bid_allocation_v1") -> None:
+        if policy != "bid_allocation_v1":
+            raise ValueError(f"Unsupported behavioral formula policy: {policy}")
+        super().__init__(base_seed=base_seed)
+        self.policy = policy
+        self.allocator = FormulaBidAllocator(alpha_policy=AlphaPolicy(base_seed))
+        self._last_formula_policy_metrics: dict[str, object] = {}
+
+    def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
+        self._last_formula_policy_metrics = {}
+        result = super().interact(system_prompt, session, max_rounds)
+        result["behavioral_formula_policy"] = self.policy
+        result["behavioral_formula_policy_metrics"] = dict(self._last_formula_policy_metrics)
+        return result
+
+    def _build_session_bids(self, session, selected: list[str], selected_components: dict[str, dict], profile) -> list[dict]:
+        baseline_bids = {
+            item["course_id"]: int(item["bid"])
+            for item in super()._build_session_bids(session, selected, selected_components, profile)
+        }
+        selected_course_ids = [course_id for course_id in selected if course_id in baseline_bids]
+        if not selected_course_ids:
+            self._last_formula_policy_metrics = {
+                "policy": self.policy,
+                "selected_course_count": 0,
+                "baseline_total_bid": 0,
+                "formula_total_bid": 0,
+            }
+            return []
+        waitlist_context = {
+            course_id: {
+                "m": int(session.current_waitlist_counts.get(course_id, 0)),
+                "n": int(session.courses[course_id].capacity),
+            }
+            for course_id in selected_course_ids
+        }
+        requirements_by_code = {requirement.course_code: requirement for requirement in session.requirements}
+        formula_bids, _signals, metrics = self.allocator.allocate(
+            student=session.student,
+            profile=profile,
+            selected_course_ids=selected_course_ids,
+            baseline_bids=baseline_bids,
+            courses=session.courses,
+            edges=session.edges,
+            requirements_by_code=requirements_by_code,
+            derived_penalties=session.derived_penalties,
+            waitlist_context=waitlist_context,
+            time_point=session.time_point,
+            time_points_total=session.time_points_total,
+        )
+        self._last_formula_policy_metrics = {
+            "policy": self.policy,
+            "selected_course_count": len(selected_course_ids),
+            "baseline_total_bid": sum(baseline_bids.values()),
+            **metrics,
+        }
+        return [{"course_id": course_id, "bid": int(formula_bids.get(course_id, 0))} for course_id in selected_course_ids]
 
 
 class _PayloadStudent:

@@ -1,78 +1,157 @@
-# 选课豆子机制建模项目
+# 西工大的选课公式，是个骗局
 
-本项目用于定义、模拟和分析学校“投豆选课”机制下的学生个体决策问题。第一版聚焦学生如何在预算、课程容量、轮次退豆、时间冲突和学分约束下分配豆子，以最大化自己的期望效用，不先评价学校机制是否公平或最优。
+这句话不是说某个具体学校或某个具体同学在骗人。它说的是一种很常见的幻觉：只要拿到一个“投豆公式”，学生就能在选课市场里稳定变强。
 
-## 当前版本范围
+我们做了一个可复现的仿真实验，结论更直接：
 
-- 简化模型：单轮统一开奖，所有投出的豆子均不返还，等价于单轮 all-pay auction。
-- 现实模型：三轮选课，每轮统一开奖；未中课程退豆，中选课程消耗豆子，并影响后续轮次预算。
-- 豆子硬约束：所有预算、投豆、支付、退豆和录取边界投豆都只能是整数；任何小数输出都不能直接进入开奖机制。
-- 可见信息：学生在选课过程中能看到课程班容量和当前待选人数，但看不到其他人的投豆数。
-- 策略对象：学生个体，而不是学校机制设计者。
-- 数据来源：第一阶段使用合成数据，不依赖真实教务系统数据。
-- 效用模型：用学生-课程班效用边表表示个体对教学班的主观喜爱程度，必修惩罚、状态依赖豆子影子价格、学分和课表约束另行建模。
-- 大模型实验：后续让大模型扮演学生，根据效用、预算、培养方案和轮次历史生成投豆方案。
-- 神秘公式：暂时不作为通用最优解；单独分析其数学合理性和作为外部信息冲击的影响。
+**公式可以当参考，但不能当答案。真正有效的策略，是先判断有没有竞争，再决定值不值得投豆。没竞争的课少投，有竞争且有价值的课才加码。**
 
-## 工作区结构
+本仓库是一个投豆选课机制实验平台。它用合成数据模拟学生、培养方案、课程容量、课程偏好、选课轮次和 all-pay 式投豆机制，然后比较普通行为学生、公式投豆学生、LLM 学生和一个纯规则算法 CASS 的表现。
+
+## 一句话结论
+
+当前最清楚的实验结果来自 `research_large` 数据集：
+
+- `800` 名学生，`240` 个教学班，`6` 个培养方案，`3` 个 time points。
+- 背景市场的 behavioral admission rate 约 `0.7184`，属于高竞争环境。
+- S048 这个 focal student 的普通 BA baseline 只有 `3/7` 录取，`course_outcome_utility = 987.0`。
+- LLM + formula prompt 在线实验达到 `1847.5` utility。
+- CASS online 达到 `2068.75` utility，选 `12` 门，录 `11` 门，仍然没有退化成无脑猛砸豆子。
+
+所以，目前我们不再把“公式”当神秘最优解，而是把它当一个可解释的拥挤信号。后续算法目标是：
+
+1. 优先最大化 `course_outcome_utility`。
+2. 在拿到高价值课的前提下，减少拒录浪费、录取超额、事后非边际豆子和过度集中投豆。
+
+换成人话就是：**先把课抢到，而且别当怨种。**
+
+## 项目在模拟什么
+
+这里的投豆选课机制有几个核心约束：
+
+- 学生有固定预算，投出去的豆子必须是非负整数。
+- 教学班有容量，超容量时按投豆排序录取，边界同分用随机种子抽签。
+- 学生只能看到课程容量和当前可见 waitlist，不知道别人具体投了多少。
+- 学生要满足学分上限、时间冲突、同 course code 只能选一个 section 等硬约束。
+- utility 不再扣 beans_paid。豆子是 use-it-or-lose-it 预算，不是福利成本。
+
+主福利指标是：
 
 ```text
-.
-├─ README.md
-├─ docs/
-│  ├─ 00_problem_definition_simple.md
-│  ├─ 01_problem_definition_realistic.md
-│  ├─ 02_experiment_plan.md
-│  ├─ 04_utility_and_formula_analysis.md
-│  └─ 05_intra_round_dynamic_bidding.md
-├─ data/
-│  ├─ raw/
-│  ├─ synthetic/
-│  ├─ processed/
-│  └─ schemas/
-├─ configs/
-│  ├─ simple_model.yaml
-│  └─ realistic_three_rounds.yaml
-├─ prompts/
-│  ├─ single_round_all_pay_system_prompt.md
-│  ├─ student_decision_prompt.md
-│  └─ strategy_explanation_prompt.md
-├─ src/
-│  ├─ data_generation/
-│  ├─ auction_mechanism/
-│  ├─ student_agents/
-│  ├─ llm_clients/
-│  └─ experiments/
-├─ outputs/
-│  ├─ runs/
-│  ├─ tables/
-│  ├─ figures/
-│  └─ llm_traces/
-└─ reports/
-   ├─ interim/
-   └─ final/
+course_outcome_utility = gross_liking_utility + completed_requirement_value
 ```
 
-## 目录职责
+豆子相关指标只用来诊断“有没有当怨种”：
 
-- `docs/`：放问题定义、规则定义、效用模型、实验方案和公式说明，是项目的纲领层。
-- `data/raw/`：放未来可能获取的原始教务数据，不直接改动。
-- `data/synthetic/`：放第一阶段手工或脚本生成的模拟学生、课程和偏好数据。
-- `data/processed/`：放清洗、合并、约束检查后的实验输入数据。
-- `data/schemas/`：放数据表字段定义、取值约束和校验规则。
-- `configs/`：放实验配置，例如预算、轮次、课程开放比例、随机种子、退豆规则。
-- `prompts/`：放大模型扮演学生和解释策略时使用的提示词模板。
-- `src/`：放 Python 实验平台代码，包括合成数据生成、学生代理、LLM 客户端、开奖机制和实验调度。
-- `outputs/runs/`：每次实验的完整运行结果，按 `run_id` 分文件夹保存。
-- `outputs/tables/`：聚合后的指标表、对照表、消融实验表。
-- `outputs/figures/`：可视化图片，例如投豆分布、课程拥挤度、预算消耗曲线。
-- `outputs/llm_traces/`：大模型原始决策记录和解释日志。
-- `reports/interim/`：阶段性分析和实验记录。
-- `reports/final/`：最终论文、答辩材料或完整建模报告。
+- `rejected_wasted_beans`：投了但没录的豆子。
+- `admitted_excess_bid_total`：录取后超过 cutoff 的超额豆子。
+- `posthoc_non_marginal_beans`：事后看没有改变录取结果的豆子。
+- `bid_concentration_hhi`：投豆是否过度集中。
 
-## 快速运行 MVP
+## 当前主要结果
 
-创建并激活虚拟环境：
+### 1. 高竞争数据集已经成型
+
+`research_large` 不是简单把所有容量压低。它保留了总量上足够的座位，但制造真实的结构性错配：公共必修、专业核心、热门选修、PE、LabSeminar 局部拥挤，冷门课允许空置。
+
+| Dataset | Students | Sections | Profiles | Behavioral admission | Overloaded sections |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| medium | 100 | 80 | 4 | 0.8783 | 约 9-18 |
+| behavioral_large | 300 | 120 | 4 | 0.7682 | 18 |
+| research_large | 800 | 240 | 6 | 0.7184 | 53 |
+
+这说明竞争不是“大家都没课上”，而是“好位置不够，普通位置有很多”。这更接近真实选课。
+
+### 2. 普通公式 BA 不一定更好
+
+在 S048 四臂实验里，只把普通 BA 的投豆分配替换成公式 allocator，结果反而更差：
+
+| Arm | Selected | Admitted | Utility | Beans | Rejected waste | HHI |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| BA baseline | 7 | 3 | 987.0 | 100 | 33 | 0.1868 |
+| BA + formula allocation | 7 | 3 | 344.25 | 100 | 56 | 0.1448 |
+| LLM plain | 9 | 8 | 1701.5 | 100 | 6 | 0.1752 |
+| LLM + formula prompt | 9 | 9 | 1847.5 | 96 | 0 | 0.1285 |
+
+公式本身不是万能策略。它没有解决“选哪些课”这个问题，只是在给定课程集合上重新分配豆子。如果课程组合本身不好，公式也救不了。
+
+### 3. LLM + formula 强在不机械抄公式
+
+LLM + formula 并不是照公式一个字不差地投。它更像是把公式当 crowding signal，再结合课程价值、required/core 压力、替代品和 all-pay 风险做调整。
+
+例子：
+
+- `FND001-C` 公式参考约 `54`，LLM + formula 只投 `14`，最后压过 cutoff `13`。
+- `ENG001-D` 公式参考约 `8`，LLM 投 `8`，属于温和信号下接近公式。
+- `PE001-B` 公式参考约 `9`，LLM 只投 `4`，因为 PE 是 optional，不值得为它追满。
+- `MCO006-A` 在 mix30 中 cutoff 为 `0`，LLM plain 投 `30`，LLM + formula 降到 `12`。
+
+这就是“别当怨种”的具体含义：不是永远低投，而是在没有竞争或价值不够的时候别过度支付。
+
+### 4. CASS 目前是最强规则 baseline
+
+CASS 全称是 `Competition-Adaptive Selfish Selector`。它是一个纯规则、非 LLM 的 focal student 算法，目标不是全市场均衡，而是给定其他人怎么投之后，让这个学生自己的 utility 尽量高。
+
+核心规则很简单：
+
+```text
+一看排队比 m/n：
+  <= 30%     投 1-2 豆，别当怨种
+  30%-60%    投 2-3 豆
+  60%-100%   投 3-5 豆
+  100%-150%  投 5-8 豆
+  > 150%     required 才追，普通 elective 找替代
+
+二看课价值：
+  必修 > 强推选修 > 普通选修
+  喜欢的优先，学分低的可以扩大覆盖
+
+三看有没有替代：
+  不跟大热 elective 硬碰
+  分散投资，不把成败压在一门课上
+```
+
+S048 head-to-head 结果：
+
+| Mode | Strategy | Selected | Admitted | Utility | Beans | Rejected waste | Posthoc non-marginal |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| fixed replay | LLM + formula | 8 | 8 | 1674.5 | 82 | 0 | 76 |
+| fixed replay | CASS v1 | 12 | 11 | 2031.5 | 65 | 20 | 60 |
+| online | LLM + formula | 9 | 9 | 1847.5 | 96 | 0 | 75 |
+| online | CASS v1 | 12 | 11 | 2068.75 | 85 | 20 | 66 |
+
+CASS 会接受少量失败，用 20 豆试错换更高的课程覆盖和 requirement completion。按当前目标函数，这是合理的。
+
+## 代码结构
+
+```text
+configs/     实验配置
+data/        数据目录；合成数据通过命令生成，不提交大 CSV
+docs/        问题定义、公式分析、复现实验说明
+prompts/     LLM 与 formula prompt 模板
+reports/     阶段性实验报告和审阅记录
+scripts/     常用复现实验 PowerShell 脚本
+spec/        设计规格文档
+src/         Python 实验平台
+tests/       单元测试和回归测试
+outputs/     实验输出目录；默认不入库
+```
+
+关键实现文件：
+
+- `src/data_generation/generate_synthetic_mvp.py`：生成 medium、behavioral_large、research_large 数据集。
+- `configs/generation/*.yaml`：生成器场景配置；新增数据集优先改这里。
+- `src/data_generation/audit_synthetic_dataset.py`：审计合成数据竞争结构。
+- `src/experiments/run_single_round_mvp.py`：在线实验 runner。
+- `src/student_agents/behavioral.py`：普通 BA persona 分布。
+- `src/student_agents/formula_bid_policy.py`：公式投豆 allocator。
+- `src/student_agents/cass.py`：CASS 规则算法。
+- `src/analysis/cass_focal_backtest.py`：CASS fixed-background replay。
+- `src/analysis/llm_focal_backtest.py`：LLM fixed-background replay。
+
+## 快速开始
+
+Windows PowerShell：
 
 ```powershell
 python -m venv .venv
@@ -80,89 +159,137 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-生成 medium 合成数据：
+运行测试：
 
 ```powershell
-python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
+python -m compileall src
+python -m unittest discover -s tests
 ```
 
-生成 10×20×3 在线 LLM 小测试数据：
+生成并审计高竞争数据集：
 
 ```powershell
-python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset custom --n-students 10 --n-course-sections 20 --n-profiles 3 --seed 42
+python -m src.data_generation.generate_synthetic_mvp `
+  --scenario configs/generation/research_large_high.yaml
+
+python -m src.data_generation.audit_synthetic_dataset `
+  --data-dir data/synthetic/research_large
 ```
 
-运行 behavioral 本地行为代理冒烟实验：
+旧 preset 入口仍然保留：
 
 ```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id medium_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline
+python -m src.data_generation.generate_synthetic_mvp `
+  --config configs/simple_model.yaml `
+  --preset research_large `
+  --competition-profile high
 ```
 
-运行 10×20×3 小数据集 behavioral 验证：
+跑 800 人 behavioral baseline：
 
 ```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
+python -m src.experiments.run_single_round_mvp `
+  --config configs/simple_model.yaml `
+  --run-id research_large_800x240x3_behavioral `
+  --agent behavioral `
+  --experiment-group E0_llm_natural_baseline `
+  --data-dir data/synthetic/research_large `
+  --interaction-mode tool_based `
+  --time-points 3
 ```
 
-运行 tool-based 交互模式 behavioral 验证：
+对 S048 跑 CASS fixed-background replay：
 
 ```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_tool_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42 --interaction-mode tool_based
+python -m src.analysis.cass_focal_backtest `
+  --config configs/simple_model.yaml `
+  --baseline outputs/runs/research_large_800x240x3_behavioral `
+  --focal-student-id S048 `
+  --data-dir data/synthetic/research_large `
+  --output outputs/runs/research_large_s048_cass_backtest
 ```
 
-生成并审计 300×120 behavioral large 数据：
+对 S048 跑 CASS online focal：
 
 ```powershell
-python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset behavioral_large
-python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic/behavioral_large
+python -m src.experiments.run_single_round_mvp `
+  --config configs/simple_model.yaml `
+  --run-id research_large_s048_cass_online `
+  --agent cass `
+  --experiment-group E0_llm_natural_baseline `
+  --data-dir data/synthetic/research_large `
+  --interaction-mode tool_based `
+  --time-points 3 `
+  --focal-student-id S048
 ```
 
-运行 300×120×3 behavioral tool-based 验证：
+也可以直接用脚本：
 
 ```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id behavioral_large_300x120x3_persona_v2 --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/behavioral_large --interaction-mode tool_based --time-points 3
+.\scripts\run_research_large_behavioral.ps1
+.\scripts\generation\generate_research_large.ps1
+.\scripts\experiments\run_research_large_behavioral.ps1
+.\scripts\run_s048_cass_replay.ps1
+.\scripts\run_s048_cass_online.ps1
 ```
 
-运行带单个脚本策略学生的对照实验：
+## LLM 实验
 
-```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id medium_e1 --agent behavioral --experiment-group E1_one_scripted_policy_agent --script-policy utility_weighted
-```
-
-运行重复实验：
-
-```powershell
-python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_model.yaml --run-prefix e0_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --n-repetitions 50
-```
-
-结果会写入：
-
-```text
-outputs/runs/<run_id>/
-```
-
-真实大模型调用使用 OpenAI-compatible 环境变量：
+LLM 实验使用 OpenAI-compatible 环境变量：
 
 ```powershell
 $env:OPENAI_API_KEY="..."
 $env:OPENAI_MODEL="..."
-# 可选：$env:OPENAI_BASE_URL="..."
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id real_llm_001 --agent openai --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
+# 可选：
+$env:OPENAI_BASE_URL="..."
 ```
 
-也可以在本地 `.env.local` 中保存上述 `OPENAI_*` 配置；该文件已被 `.gitignore` 忽略，不应提交。
+这些变量可以放进本地 `.env.local`，该文件已被 `.gitignore` 排除。不要提交真实 key。
 
-运行标准库测试：
+S048 LLM + formula online：
 
 ```powershell
-python -m unittest discover
+python -m src.experiments.run_single_round_mvp `
+  --config configs/simple_model.yaml `
+  --run-id research_large_s048_llm_formula `
+  --agent openai `
+  --experiment-group E0_llm_natural_baseline `
+  --data-dir data/synthetic/research_large `
+  --interaction-mode tool_based `
+  --time-points 3 `
+  --focal-student-id S048 `
+  --formula-prompt
 ```
 
-## 后续建议顺序
+## 数据和输出
 
-1. 用 `custom 10×20×3` 数据集跑一次 behavioral，再接入真实 OpenAI-compatible API 跑一次 E0 小测试。
-2. 审阅 `outputs/runs/<run_id>/llm_traces.jsonl`，重点看大模型是否理解效用、预算、待选人数和整数投豆。
-3. 若在线小测试稳定，再用 `medium` 数据集跑 E0/E1/E2 behavioral，观察基础行为标签和效用差。
-4. 再决定是否进入 E3/E4/E5：策略提示、公式信息冲击和公式回测。
+仓库默认不提交生成数据和实验输出：
 
-实现时必须先校验投豆整数性：大模型、公式或启发式策略输出的小数建议只能作为中间信号，进入 `decisions.csv` 和开奖机制前必须转换为非负整数，并保证总投豆不超过整数预算。
+- `data/synthetic/*`
+- `data/processed/*`
+- `outputs/runs/*`
+- `outputs/tables/*`
+- `outputs/figures/*`
+- `outputs/llm_traces/*`
+
+保留这些目录下的 `README.md` 是为了说明用途。真正的 CSV 和 JSON 结果通过命令生成。
+
+## 主要报告
+
+- `reports/interim/report_2026-04-27_formula_baseline_and_llm_strategy.md`
+- `reports/interim/research_large_s048_four_arm_results.md`
+- `reports/interim/research_large_s048_mix30_formula_market_report.md`
+- `reports/interim/report_2026-04-27_cass_algorithm_backtest.md`
+- `reports/interim/report_2026-04-27_cass_vs_llm_formula_head_to_head.md`
+- `reports/reviews/review_2026-04-27_cass_mechanism_and_project_cleanup.md`
+
+## 当前边界
+
+- 当前数据是合成数据，不是任何真实教务系统导出的学生隐私数据。
+- CASS 目前是强规则 baseline，还不是数学意义上的全局最优解。
+- S048 已经做了较完整 head-to-head，S092、S043、S005 等 focal 的扩展仍需继续跑。
+- 本项目优化的是单个 focal student 的 selfish utility，不优化学校整体公平性或机制设计。
+
+## License
+
+MIT。

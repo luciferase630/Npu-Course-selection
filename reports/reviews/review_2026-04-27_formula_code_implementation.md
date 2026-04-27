@@ -15,7 +15,7 @@
 - ✅ Formula-informed prompt 模板（公式定义、m≤n 处理、信号过大时处理指南）
 - ✅ Focal student 机制（单 LLM + behavioral 背景板）
 - ✅ Formula reconsideration 硬边界（防止 LLM 机械遵循过高信号）
-- ✅ 完整的 focal metrics（net utility, admission rate, excess bid, wasted beans, percentile among behavioral）
+- ✅ 完整的 focal metrics（course outcome utility, admission rate, excess bid, wasted beans, percentile among behavioral；legacy net 仅作 sensitivity）
 - ✅ Response metadata 记录（system_fingerprint，用于追踪 LLM 非确定性）
 - ✅ Temperature 控制（`OPENAI_TEMPERATURE` 环境变量）
 
@@ -106,16 +106,20 @@ Prompt 结构清晰，包含：
 
 | 字段 | 含义 | 评价 |
 |------|------|------|
-| `formula_focal_net_total_utility` | focal 学生净效用 | ✅ |
+| `formula_focal_course_outcome_utility` | focal 学生主 outcome | ✅ |
 | `formula_focal_gross_liking_utility` | 毛效用 | ✅ |
-| `formula_focal_utility_per_bean` | 每豆效用 | ✅ |
+| `formula_focal_completed_requirement_value` | 本轮完成 requirement 的价值 | ✅ |
+| `formula_focal_remaining_requirement_risk` | 剩余培养方案风险 | ✅ |
+| `formula_focal_outcome_utility_per_bean` | 主 outcome 每豆效率 | ✅ |
+| `formula_focal_net_total_utility` | legacy shadow-cost 净效用 | sensitivity |
 | `formula_focal_beans_paid` | 实际支付豆数 | ✅ |
 | `formula_focal_selected_course_count` | 选中课程数 | ✅ |
 | `formula_focal_admission_rate` | 录取率 | ✅ |
 | `formula_focal_rejected_wasted_beans` | 被拒课程的浪费豆数 | ✅ |
 | `formula_focal_admitted_excess_bid_total` | 录取课程的过量出价总和 | ✅ |
 | `formula_focal_bid_concentration_hhi` | bid 集中度 | ✅ |
-| `formula_focal_net_utility_percentile_among_behavioral` | 在 behavioral 中的百分位 | ⭐ **核心对比指标** |
+| `formula_focal_course_outcome_percentile_among_behavioral` | 在 behavioral 中的主 outcome 百分位 | ⭐ **核心对比指标** |
+| `formula_focal_net_utility_percentile_among_behavioral` | legacy net 百分位 | sensitivity |
 
 **主循环改动**：
 - `active_client` 根据 `agent_type` 从 `client_by_agent` 字典中获取
@@ -202,10 +206,10 @@ near_all_in = (
 ### 4.3 `compute_focal_metrics` 的 percent_rank 计算
 
 ```python
-percentile = round(sum(1 for value in behavioral_values if value <= focal_net) / len(behavioral_values), 4)
+percentile = round(sum(1 for value in behavioral_values if value <= focal_outcome) / len(behavioral_values), 4)
 ```
 
-这是 "≤ focal_net 的比例"，即 percentile rank。当 focal_net 为负值时，如果大部分 behavioral 是正值，percentile 接近 0。这是正确的行为，但需要后续分析时注意解释方向。
+这是 "≤ focal outcome 的比例"，即 percentile rank。当前主排序字段应使用 `course_outcome_utility`；旧 `net_total_utility` 的 percentile 仅保留为 shadow-cost sensitivity。
 
 ---
 
@@ -219,7 +223,7 @@ percentile = round(sum(1 for value in behavioral_values if value <= focal_net) /
 ```powershell
 python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id medium_behavioral_e0 --agent behavioral --experiment-group E0_llm_natural_baseline
 ```
-目的：获取 100×80×3 behavioral 的 admission_rate 和 net utility，作为 LLM 的对比基准。
+目的：获取 100×80×3 behavioral 的 admission_rate 和 `course_outcome_utility`，作为 LLM 的对比基准；legacy net 只作为 sensitivity。
 
 **Step 2：Matched A/B — A Run（普通 prompt focal）**
 ```powershell
@@ -235,10 +239,11 @@ python -m src.experiments.run_single_round_mvp --config configs/simple_model.yam
 ```
 
 **Step 4：对比分析**
-- 对比 A/B 的 `formula_focal_net_total_utility`
+- 对比 A/B 的 `formula_focal_course_outcome_utility`
+- 同步记录 `formula_focal_net_total_utility` 作为 legacy sensitivity
 - 对比 `formula_focal_admission_rate`
 - 对比 `formula_focal_rejected_wasted_beans` 和 `formula_focal_admitted_excess_bid_total`
-- 对比 focal 在 behavioral 中的 percentile
+- 对比 focal 在 behavioral 中的 `course_outcome_utility` percentile
 - 分析 B run 的 `formula_alpha_mean`、`formula_action_counts`
 
 **Step 5：扩展（如果 Step 2-4 稳定）**
