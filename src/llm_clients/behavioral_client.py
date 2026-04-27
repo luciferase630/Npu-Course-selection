@@ -114,7 +114,7 @@ class BehavioralAgentClient:
             "behavioral_profile": profile.to_dict(),
         }
 
-    def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
+    def interact(self, system_prompt: str, session, max_rounds: int, **_kwargs) -> dict:
         profile = self._sample_profile(session.student)
         rng = random.Random(stable_behavior_seed(self.base_seed + session.time_point * 7919, session.student.student_id))
         trace = []

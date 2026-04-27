@@ -110,6 +110,123 @@ def _response_usage(response: object) -> dict:
     }
 
 
+def _safe_tool_name(record: dict) -> str:
+    request = record.get("tool_request", {}) if isinstance(record, dict) else {}
+    if isinstance(request, dict):
+        return str(request.get("tool_name", ""))
+    return ""
+
+
+def _compact_interaction_state(trace: list[dict]) -> dict:
+    tool_names = [_safe_tool_name(record) for record in trace]
+    check_true = 0
+    check_false = 0
+    submit_errors = 0
+    last_result_summary: dict = {}
+    latest_explicit_bids: list | None = None
+    latest_explicit_bids_tool = ""
+    latest_feasible_checked_bids: list | None = None
+    for record in trace:
+        request = record.get("tool_request", {}) if isinstance(record, dict) else {}
+        result = record.get("tool_result", {}) if isinstance(record, dict) else {}
+        arguments = request.get("arguments", {}) if isinstance(request, dict) else {}
+        if isinstance(arguments, dict) and isinstance(arguments.get("bids"), list):
+            latest_explicit_bids = arguments["bids"]
+            latest_explicit_bids_tool = _safe_tool_name(record)
+        if not isinstance(result, dict):
+            continue
+        tool_name = _safe_tool_name(record)
+        if tool_name == "check_schedule":
+            if result.get("feasible") is True:
+                check_true += 1
+                if isinstance(arguments, dict) and isinstance(arguments.get("bids"), list):
+                    latest_feasible_checked_bids = arguments["bids"]
+            elif result.get("feasible") is False:
+                check_false += 1
+        if tool_name == "submit_bids" and result.get("status") != "accepted":
+            submit_errors += 1
+        last_result_summary = {
+            "tool_name": tool_name,
+            "status": result.get("status"),
+            "feasible": result.get("feasible"),
+            "required_next_tool": result.get("required_next_tool"),
+            "selected_count": result.get("summary", {}).get("selected_count") if isinstance(result.get("summary"), dict) else None,
+        }
+    return {
+        "rounds_completed": len(trace),
+        "tools_called": tool_names,
+        "search_courses_called": "search_courses" in tool_names,
+        "check_schedule_feasible_true_count": check_true,
+        "check_schedule_feasible_false_count": check_false,
+        "submit_error_count": submit_errors,
+        "last_result_summary": last_result_summary,
+        "latest_explicit_bids_tool": latest_explicit_bids_tool,
+        "latest_explicit_bids": latest_explicit_bids or [],
+        "latest_feasible_checked_bids": latest_feasible_checked_bids or [],
+        "history_note": (
+            "Older tool rounds are summarized here to reduce prompt size. The exact recent tool request/result "
+            "messages below are the source of truth for the next action."
+        ),
+    }
+
+
+def build_tool_messages(
+    system_prompt: str,
+    initial_payload: dict,
+    trace: list[dict],
+    *,
+    history_policy: str = "full",
+    history_last_rounds: int = 1,
+) -> list[dict]:
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(initial_payload, ensure_ascii=False)},
+    ]
+    if history_policy != "compact_last_n":
+        for record in trace:
+            messages.append({"role": "assistant", "content": json.dumps(record.get("tool_request", {}), ensure_ascii=False)})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "tool_result": record.get("tool_result", {}),
+                            "rounds_remaining": record.get("rounds_remaining"),
+                            "protocol_instruction": record.get("protocol_instruction"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+        return messages
+
+    keep_count = max(0, int(history_last_rounds))
+    if trace:
+        messages.append(
+            {
+                "role": "user",
+                "content": json.dumps({"compact_interaction_state": _compact_interaction_state(trace)}, ensure_ascii=False),
+            }
+        )
+    recent_trace = trace[-keep_count:] if keep_count else []
+    for record in recent_trace:
+        messages.append({"role": "assistant", "content": json.dumps(record.get("tool_request", {}), ensure_ascii=False)})
+        messages.append(
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "tool_result": record.get("tool_result", {}),
+                        "rounds_remaining": record.get("rounds_remaining"),
+                        "protocol_instruction": record.get("protocol_instruction"),
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        )
+    return messages
+
+
 class OpenAICompatibleClient:
     def __init__(self) -> None:
         load_local_env()
@@ -146,11 +263,16 @@ class OpenAICompatibleClient:
             raise RuntimeError("OpenAI-compatible response had empty content")
         return parse_json_object(content)
 
-    def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(session.initial_payload(), ensure_ascii=False)},
-        ]
+    def interact(
+        self,
+        system_prompt: str,
+        session,
+        max_rounds: int,
+        *,
+        history_policy: str = "full",
+        history_last_rounds: int = 1,
+    ) -> dict:
+        initial_payload = session.initial_payload()
         trace = []
         submit_rejected_count = 0
         last_request = None
@@ -165,6 +287,13 @@ class OpenAICompatibleClient:
         api_completion_tokens = 0
         api_total_tokens = 0
         for round_index in range(1, max_rounds + 1):
+            messages = build_tool_messages(
+                system_prompt,
+                initial_payload,
+                trace,
+                history_policy=history_policy,
+                history_last_rounds=history_last_rounds,
+            )
             request_char_count = sum(len(message.get("content", "")) for message in messages)
             request_char_count_total += request_char_count
             request_char_count_max = max(request_char_count_max, request_char_count)
@@ -204,9 +333,10 @@ class OpenAICompatibleClient:
             if tool_name == "__parse_error__":
                 tool_result = {"status": "error", "error": tool_request.get("error", "parse error")}
             else:
-                tool_result = session.call_tool(tool_name, arguments)
+                tool_result = session.call_tool(tool_name, arguments, rounds_remaining=max_rounds - round_index)
             if tool_name == "submit_bids" and tool_result.get("status") == "rejected":
                 submit_rejected_count += 1
+            rounds_remaining = max_rounds - round_index
             if tool_name == "submit_bids" and tool_result.get("status") == "accepted":
                 final_decision_explanation = decision_explanation
                 trace.append(
@@ -216,7 +346,7 @@ class OpenAICompatibleClient:
                         "decision_explanation": decision_explanation,
                         "tool_request": tool_request,
                         "tool_result": tool_result,
-                        "rounds_remaining": max_rounds - round_index,
+                        "rounds_remaining": rounds_remaining,
                         "protocol_instruction": None,
                     }
                 )
@@ -239,7 +369,6 @@ class OpenAICompatibleClient:
                     "api_completion_tokens": api_completion_tokens,
                     "api_total_tokens": api_total_tokens,
                 }
-            rounds_remaining = max_rounds - round_index
             protocol_instruction = session.build_protocol_instruction(tool_name, tool_result, rounds_remaining)
             trace.append(
                 {
@@ -250,20 +379,6 @@ class OpenAICompatibleClient:
                     "tool_result": tool_result,
                     "rounds_remaining": rounds_remaining,
                     "protocol_instruction": protocol_instruction,
-                }
-            )
-            messages.append({"role": "assistant", "content": json.dumps(tool_request, ensure_ascii=False)})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "tool_result": tool_result,
-                            "rounds_remaining": rounds_remaining,
-                            "protocol_instruction": protocol_instruction,
-                        },
-                        ensure_ascii=False,
-                    ),
                 }
             )
         return {

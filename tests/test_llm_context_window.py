@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.experiments.run_single_round_mvp import build_retry_feedback, check_schedule_constraints
+from src.experiments.run_single_round_mvp import build_retry_feedback, check_schedule_constraints, summarize_tool_trace
 from src.models import Course, CourseRequirement, Student, UtilityEdge
 from src.student_agents.context import build_interaction_payload, build_state_snapshot, build_student_private_context
 from src.student_agents.validation import validate_decision_output
@@ -201,6 +201,20 @@ class LLMContextWindowTests(unittest.TestCase):
         self.assertEqual(hints["selected_time_conflict_groups"][0]["time_slot"], "Mon-1-2")
         self.assertEqual(set(hints["selected_time_conflict_groups"][0]["selected_course_ids"]), {left.course_id, right.course_id})
         self.assertIn("displayed_conflict_summary_reminder", feedback)
+
+    def test_summarize_tool_trace_counts_tools_and_check_feasibility(self) -> None:
+        summary = summarize_tool_trace(
+            [
+                {"tool_request": {"tool_name": "search_courses"}, "tool_result": {"status": "ok"}},
+                {"tool_request": {"tool_name": "check_schedule"}, "tool_result": {"feasible": False}},
+                {"tool_request": {"tool_name": "check_schedule"}, "tool_result": {"feasible": True}},
+                {"tool_request": {"tool_name": "submit_bids"}, "tool_result": {"status": "accepted"}},
+            ]
+        )
+        self.assertEqual(summary["tool_name_counts"]["search_courses"], 1)
+        self.assertEqual(summary["tool_name_counts"]["check_schedule"], 2)
+        self.assertEqual(summary["check_schedule_feasible_true_count"], 1)
+        self.assertEqual(summary["check_schedule_feasible_false_count"], 1)
 
 
 if __name__ == "__main__":

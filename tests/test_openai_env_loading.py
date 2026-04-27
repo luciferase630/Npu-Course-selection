@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.llm_clients.openai_client import extract_decision_explanation, load_local_env, parse_json_object
+from src.llm_clients.openai_client import build_tool_messages, extract_decision_explanation, load_local_env, parse_json_object
 
 
 class OpenAIEnvLoadingTests(unittest.TestCase):
@@ -87,6 +87,35 @@ class OpenAIEnvLoadingTests(unittest.TestCase):
             extract_decision_explanation({"tool_name": "__parse_error__"}, raw),
             "I kept the feasible required section and stayed within budget",
         )
+
+    def test_build_tool_messages_compacts_history_but_keeps_recent_round(self) -> None:
+        trace = [
+            {
+                "tool_request": {"tool_name": "search_courses", "arguments": {"keyword": "OLD-ID"}},
+                "tool_result": {"status": "ok", "courses": [{"course_id": "OLD-ID"}]},
+                "rounds_remaining": 4,
+                "protocol_instruction": "continue",
+            },
+            {
+                "tool_request": {"tool_name": "check_schedule", "arguments": {"bids": [{"course_id": "RECENT-ID", "bid": 1}]}},
+                "tool_result": {"status": "ok", "feasible": True, "summary": {"selected_count": 1}},
+                "rounds_remaining": 3,
+                "protocol_instruction": "submit",
+            },
+        ]
+        messages = build_tool_messages(
+            "system",
+            {"student_id": "S001"},
+            trace,
+            history_policy="compact_last_n",
+            history_last_rounds=1,
+        )
+        content = "\n".join(message["content"] for message in messages)
+        self.assertEqual(len(messages), 5)
+        self.assertIn("compact_interaction_state", content)
+        self.assertIn("RECENT-ID", content)
+        self.assertNotIn('"keyword": "OLD-ID"', content)
+        self.assertEqual(len(trace), 2)
 
 
 if __name__ == "__main__":

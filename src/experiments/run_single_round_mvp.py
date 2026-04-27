@@ -446,6 +446,33 @@ def compute_final_decision_metrics(final_decisions: dict[tuple[str, str], dict],
     }
 
 
+def summarize_tool_trace(tool_trace: list[dict]) -> dict:
+    tool_name_counts: Counter[str] = Counter()
+    check_schedule_feasible_true_count = 0
+    check_schedule_feasible_false_count = 0
+    for attempt in tool_trace:
+        if not isinstance(attempt, dict):
+            continue
+        request = attempt.get("tool_request", {})
+        if not isinstance(request, dict):
+            continue
+        tool_name = str(request.get("tool_name", ""))
+        if not tool_name:
+            continue
+        tool_name_counts[tool_name] += 1
+        result = attempt.get("tool_result", {})
+        if tool_name == "check_schedule" and isinstance(result, dict):
+            if result.get("feasible") is True:
+                check_schedule_feasible_true_count += 1
+            elif result.get("feasible") is False:
+                check_schedule_feasible_false_count += 1
+    return {
+        "tool_name_counts": tool_name_counts,
+        "check_schedule_feasible_true_count": check_schedule_feasible_true_count,
+        "check_schedule_feasible_false_count": check_schedule_feasible_false_count,
+    }
+
+
 def main() -> None:
     started_at = time.perf_counter()
     parser = argparse.ArgumentParser(description="Run single-round all-pay MVP experiment.")
@@ -523,6 +550,9 @@ def main() -> None:
     tool_round_limit_count = 0
     tool_request_char_count_total = 0
     tool_request_char_count_max = 0
+    tool_name_counts: Counter[str] = Counter()
+    check_schedule_feasible_true_count = 0
+    check_schedule_feasible_false_count = 0
     llm_explanation_count = 0
     llm_explanation_missing_count = 0
     llm_explanation_char_count_total = 0
@@ -602,10 +632,26 @@ def main() -> None:
                     available_course_ids=available_course_ids,
                     current_waitlist_counts=current_counts,
                     state_dependent_lambda=state_lambda,
+                    starter_top_courses_max_results=int(retry_config.get("tool_starter_top_courses_max_results", 8)),
+                    starter_required_sections_max_per_requirement=int(
+                        retry_config.get("tool_starter_required_sections_max_per_requirement", 3)
+                    ),
+                    require_search_before_submit=bool(retry_config.get("tool_require_search_before_submit", False)),
+                    search_requirement_min_rounds_remaining=int(
+                        retry_config.get("tool_search_requirement_min_rounds_remaining", 2)
+                    ),
                 )
                 max_tool_rounds = int(retry_config.get("max_tool_rounds", 10))
+                tool_history_policy = str(retry_config.get("tool_history_policy", "full"))
+                tool_history_last_rounds = int(retry_config.get("tool_history_last_rounds", 1))
                 try:
-                    tool_result = llm_client.interact(tool_system_prompt, session, max_tool_rounds)
+                    tool_result = llm_client.interact(
+                        tool_system_prompt,
+                        session,
+                        max_tool_rounds,
+                        history_policy=tool_history_policy,
+                        history_last_rounds=tool_history_last_rounds,
+                    )
                 except json.JSONDecodeError as exc:
                     tool_result = {
                         "accepted": False,
@@ -658,6 +704,10 @@ def main() -> None:
                     tool_round_limit_count += 1
                 raw_output = tool_result.get("final_tool_request")
                 attempts = tool_result.get("tool_trace", [])
+                tool_trace_summary = summarize_tool_trace(attempts)
+                tool_name_counts.update(tool_trace_summary["tool_name_counts"])
+                check_schedule_feasible_true_count += int(tool_trace_summary["check_schedule_feasible_true_count"])
+                check_schedule_feasible_false_count += int(tool_trace_summary["check_schedule_feasible_false_count"])
                 model_decision_explanation = str(tool_result.get("final_decision_explanation", "") or "")
                 if tool_result.get("accepted"):
                     applied, apply_error, events = apply_decision(
@@ -1072,6 +1122,11 @@ def main() -> None:
         "average_tool_rounds_per_interaction": round(tool_call_count / max(1, tool_interaction_count), 4),
         "tool_submit_rejected_count": tool_submit_rejected_count,
         "tool_round_limit_count": tool_round_limit_count,
+        "tool_name_counts": dict(sorted(tool_name_counts.items())),
+        "check_schedule_feasible_true_count": check_schedule_feasible_true_count,
+        "check_schedule_feasible_false_count": check_schedule_feasible_false_count,
+        "search_courses_count": int(tool_name_counts.get("search_courses", 0)),
+        "get_course_details_count": int(tool_name_counts.get("get_course_details", 0)),
         "tool_request_char_count_total": tool_request_char_count_total,
         "tool_request_char_count_max": tool_request_char_count_max,
         "llm_explanation_count": llm_explanation_count,

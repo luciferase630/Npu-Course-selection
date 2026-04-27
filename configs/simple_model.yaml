@@ -129,6 +129,12 @@ llm_context:
   max_displayed_course_sections: 40
   max_retries_on_invalid_output: 2
   max_tool_rounds: 10
+  tool_history_policy: compact_last_n
+  tool_history_last_rounds: 1
+  tool_starter_top_courses_max_results: 8
+  tool_starter_required_sections_max_per_requirement: 3
+  tool_require_search_before_submit: false
+  tool_search_requirement_min_rounds_remaining: 2
   display_policy: attention_window_required_sections_then_high_utility
   filtered_courses_remain_eligible: true
   tool_system_prompt: prompts/tool_based_system_prompt.md

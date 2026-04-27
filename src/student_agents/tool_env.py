@@ -30,8 +30,13 @@ class StudentSession:
     available_course_ids: list[str]
     current_waitlist_counts: dict[str, int]
     state_dependent_lambda: float
+    starter_top_courses_max_results: int = 8
+    starter_required_sections_max_per_requirement: int = 3
+    require_search_before_submit: bool = False
+    search_requirement_min_rounds_remaining: int = 2
     draft_bids: dict[str, int] = field(default_factory=dict)
     rejected_submit_requires_check: bool = False
+    has_called_search_courses: bool = False
 
     def __post_init__(self) -> None:
         if not self.draft_bids:
@@ -74,13 +79,21 @@ class StudentSession:
                     "submit_bids",
                     "withdraw_bids",
                 ],
+                "catalog_access": (
+                    "starter_top_courses is only a starter sample. Use search_courses when you need more eligible "
+                    "candidates or alternatives after conflicts."
+                ),
             },
             "starter_status": self.get_current_status(),
-            "starter_required_sections": self.list_required_sections({"max_sections_per_requirement": 3}),
-            "starter_top_courses": self.search_courses({"sort_by": "utility", "max_results": 12}),
+            "starter_required_sections": self.list_required_sections(
+                {"max_sections_per_requirement": self.starter_required_sections_max_per_requirement}
+            ),
+            "starter_top_courses": self.search_courses(
+                {"sort_by": "utility", "max_results": self.starter_top_courses_max_results}
+            ),
         }
 
-    def call_tool(self, tool_name: str, arguments: dict | None = None) -> dict:
+    def call_tool(self, tool_name: str, arguments: dict | None = None, *, rounds_remaining: int | None = None) -> dict:
         arguments = arguments or {}
         try:
             if tool_name == "get_current_status":
@@ -88,13 +101,14 @@ class StudentSession:
             if tool_name == "list_required_sections":
                 return self.list_required_sections(arguments)
             if tool_name == "search_courses":
+                self.has_called_search_courses = True
                 return self.search_courses(arguments)
             if tool_name == "get_course_details":
                 return self.get_course_details(arguments)
             if tool_name == "check_schedule":
                 return self.check_schedule(arguments)
             if tool_name == "submit_bids":
-                return self.submit_bids(arguments)
+                return self.submit_bids(arguments, rounds_remaining=rounds_remaining)
             if tool_name == "withdraw_bids":
                 return self.withdraw_bids(arguments)
             return {"status": "error", "error": f"unknown tool_name {tool_name}"}
@@ -127,6 +141,11 @@ class StudentSession:
         if last_tool_name == "check_schedule" and last_tool_result.get("feasible"):
             return "The checked proposal is feasible. Call submit_bids with the same bids now."
         if last_tool_name == "submit_bids" and last_tool_result.get("error_type") == "protocol_error":
+            if last_tool_result.get("required_next_tool") == "search_courses":
+                return (
+                    "Before final submit, call search_courses at least once to browse the eligible catalog beyond "
+                    "the starter sample. Then check_schedule if needed and submit_bids."
+                )
             return (
                 "Do not call submit_bids again yet. First call check_schedule with your fixed proposal. Do not add "
                 "replacement courses while repairing; shrink or adjust the current proposal until check_schedule "
@@ -277,8 +296,19 @@ class StudentSession:
             proposal_includes_explicit_bids=parse_result["proposal_includes_explicit_bids"],
         )
 
-    def submit_bids(self, arguments: dict | None = None) -> dict:
+    def submit_bids(self, arguments: dict | None = None, *, rounds_remaining: int | None = None) -> dict:
         arguments = arguments or {}
+        remaining = self.search_requirement_min_rounds_remaining if rounds_remaining is None else rounds_remaining
+        if self.require_search_before_submit and not self.has_called_search_courses and remaining >= self.search_requirement_min_rounds_remaining:
+            return {
+                "status": "error",
+                "error_type": "protocol_error",
+                "error": (
+                    "search_courses must be called at least once before submit_bids because the starter course list "
+                    "is only a small sample of the eligible catalog."
+                ),
+                "required_next_tool": "search_courses",
+            }
         if self.rejected_submit_requires_check:
             return {
                 "status": "error",

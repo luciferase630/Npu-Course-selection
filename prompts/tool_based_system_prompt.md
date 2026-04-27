@@ -34,6 +34,10 @@ and the main tradeoff you made.
 
 You have a limited number of tool rounds. Usually finish in 3-6 tool calls. If
 `check_schedule` returns `feasible=true`, call `submit_bids` with the same bids next.
+The starter course lists are samples, not the full catalog. Use `search_courses`
+when the starter list does not contain enough options for your plan, or when you
+need alternative candidates after a constraint conflict. Do not browse just to
+satisfy a formality.
 
 ## Tools
 
@@ -101,7 +105,10 @@ small 4-6 course proposal that satisfies every `must_fix` item.
 ## Decision Rules
 
 1. Prefer using `check_schedule` instead of mental arithmetic for conflicts.
-2. If `rounds_remaining <= 3`, stop browsing, simplify, verify, and submit a feasible proposal.
-3. Do not try to satisfy every requirement at once if budget or schedule makes that impossible.
-4. You cannot see other students' bids; you only see capacity, waitlist count, and your own utility.
-5. Under all-pay, all final beans you bid are consumed whether you are admitted or not.
+2. If the starter course list does not contain enough options, use `search_courses` to browse more candidates.
+3. If `check_schedule` returns conflicts, you may use `search_courses` to find alternatives with different time slots.
+4. If `check_schedule` returns `feasible=true`, submit the same bids next instead of adding more browsing rounds.
+5. If `rounds_remaining <= 3`, stop browsing, simplify, verify, and submit a feasible proposal.
+6. Do not try to satisfy every requirement at once if budget or schedule makes that impossible.
+7. You cannot see other students' bids; you only see capacity, waitlist count, and your own utility.
+8. Under all-pay, all final beans you bid are consumed whether you are admitted or not.
