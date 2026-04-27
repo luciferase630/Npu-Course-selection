@@ -88,3 +88,7 @@ bidflow analyze focal --run ./outputs/my_test --student-id S001
 ```
 
 主指标是 `course_outcome_utility`。豆子相关字段只用于诊断是否“怨种式多投”，不作为福利成本扣除。
+
+## 旧入口
+
+旧的 `python -m src.*` 命令和 `scripts/*.ps1` 仍然保留。它们现在是 compatibility layer，用来复现实验历史结果；新用户优先使用 `bidflow`。迁移映射见 `docs/legacy_entrypoints.md`。
