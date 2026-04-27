@@ -65,3 +65,12 @@
 - The platform also writes `llm_model_outputs.jsonl`, one row per concrete model output, so reviewers can inspect what the model actually emitted without unpacking nested traces.
 - The platform writes `llm_decision_explanations.jsonl`, one row per student decision, with the final explanation, final model output, and application status.
 - Missing explanations are counted in `metrics.json` but do not invalidate an otherwise legal bid submission.
+
+## 8. Behavioral agent baseline
+
+- `behavioral` is the official local non-LLM baseline; `mock` is only a legacy CLI alias and should resolve to effective agent `behavioral`.
+- Current implemented personas are `balanced_student`, `conservative_student`, `aggressive_student`, and `novice_student`.
+- Current implemented behavior parameters cover overconfidence, herding/avoidance, exploration, positive inertia for currently selected courses, deadline focus, impatience, budget conservatism, finite attention, category bias, and ex-ante risk aversion.
+- The single-round all-pay MVP does not model post-allocation learning. Rejection-driven loss aversion or negative inertia must wait for a true multi-round design with observed admission feedback.
+- Proposed future personas are not implemented in this baseline: social, procrastinator, perfectionist, pragmatist, explorer, GPA-oriented, and anxious. Social and GPA-oriented require additional observable inputs such as friend choices or teacher grading signals.
+- Behavioral audit and runtime must share the same scoring helpers and category limits so audit pressure predictions remain comparable with actual behavioral runs.

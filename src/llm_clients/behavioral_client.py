@@ -4,6 +4,8 @@ import json
 import random
 
 from src.student_agents.behavioral import (
+    BEHAVIORAL_CATEGORY_LIMITS,
+    BehavioralProfile,
     behavioral_spend_ratio,
     behavioral_target_course_count,
     sample_behavioral_profile,
@@ -22,9 +24,10 @@ class BehavioralAgentClient:
     def complete(self, system_prompt: str, interaction_payload: dict) -> dict:
         private = interaction_payload["student_private_context"]
         state = interaction_payload["state_snapshot"]
-        student_id = str(private["student_id"])
+        payload_student = _PayloadStudent(private)
+        student_id = payload_student.student_id
         time_point = int(state["time_point"])
-        profile = sample_behavioral_profile(_PayloadStudent(private), self.base_seed)
+        profile = self._sample_profile(payload_student)
         rng = random.Random(stable_behavior_seed(self.base_seed + time_point * 7919, student_id))
         budget = int(state["budget_available"])
         course_states = {item["course_id"]: item for item in state["course_states"]}
@@ -53,7 +56,7 @@ class BehavioralAgentClient:
         selected_time_slots: set[str] = set()
         selected_credits = 0.0
         selected_rows = []
-        target_count = behavioral_target_course_count(_PayloadStudent(private), profile)
+        target_count = behavioral_target_course_count(payload_student, profile)
         for score, components, course, current, crowding in candidates:
             course_slots = split_time_slots(str(course["time_slot"]))
             if len(selected_rows) >= target_count:
@@ -64,7 +67,7 @@ class BehavioralAgentClient:
                 continue
             if selected_credits + float(course["credit"]) > float(private.get("credit_cap", 30)):
                 continue
-            selected_rows.append((score, components, course, current, crowding))
+            selected_rows.append((score, components, course, crowding))
             selected_by_code.add(course["course_code"])
             selected_time_slots.update(course_slots)
             selected_credits += float(course["credit"])
@@ -112,7 +115,7 @@ class BehavioralAgentClient:
         }
 
     def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
-        profile = sample_behavioral_profile(session.student, self.base_seed)
+        profile = self._sample_profile(session.student)
         rng = random.Random(stable_behavior_seed(self.base_seed + session.time_point * 7919, session.student.student_id))
         trace = []
         explanation_count = 0
@@ -167,7 +170,7 @@ class BehavioralAgentClient:
         scored_candidates = self._score_session_candidates(session, required, top_courses, profile, rng)
         selected, selected_components = self._select_feasible_courses(session, scored_candidates, profile)
         if not selected:
-            decision_context = self._build_decision_context(session, scored_candidates, selected, selected_components, [])
+            decision_context = self._build_decision_context(session, profile, scored_candidates, selected, selected_components, [])
             submit = call(
                 "submit_bids",
                 {"bids": []},
@@ -176,7 +179,7 @@ class BehavioralAgentClient:
             )
         else:
             bids = self._build_session_bids(session, selected, selected_components, profile)
-            decision_context = self._build_decision_context(session, scored_candidates, selected, selected_components, bids)
+            decision_context = self._build_decision_context(session, profile, scored_candidates, selected, selected_components, bids)
             call(
                 "check_schedule",
                 {"bids": bids},
@@ -214,6 +217,9 @@ class BehavioralAgentClient:
             "behavioral_decision_context": decision_context,
             "error": "" if submit.get("status") == "accepted" else submit.get("error", "behavioral tool submit failed"),
         }
+
+    def _sample_profile(self, student) -> BehavioralProfile:
+        return sample_behavioral_profile(student, self.base_seed)
 
     def _score_session_candidates(self, session, required: dict, top_courses: dict, profile, rng: random.Random) -> list[dict]:
         requirements_by_code = {requirement.course_code: requirement for requirement in session.requirements}
@@ -272,7 +278,6 @@ class BehavioralAgentClient:
         target_count = behavioral_target_course_count(session.student, profile)
         selected: list[str] = []
         selected_components: dict[str, dict] = {}
-        category_limits = {"Foundation": 2, "English": 1, "MajorCore": 4, "MajorElective": 2, "PE": 1, "LabSeminar": 1}
         for pass_index in range(2):
             for item in scored_candidates:
                 course_id = item["course_id"]
@@ -281,7 +286,7 @@ class BehavioralAgentClient:
                 course = session.courses[course_id]
                 if pass_index == 0:
                     existing = sum(1 for selected_id in selected if session.courses[selected_id].category == course.category)
-                    if existing >= category_limits.get(course.category, target_count):
+                    if existing >= BEHAVIORAL_CATEGORY_LIMITS.get(course.category, target_count):
                         continue
                 proposal = selected + [course_id]
                 check = session.call_tool("check_schedule", {"proposed_course_ids": proposal})
@@ -326,6 +331,7 @@ class BehavioralAgentClient:
     def _build_decision_context(
         self,
         session,
+        profile,
         scored_candidates: list[dict],
         selected: list[str],
         selected_components: dict[str, dict],
@@ -354,7 +360,7 @@ class BehavioralAgentClient:
             row["bid"] = bid_by_course.get(course_id, 0)
             selected_rows.append(row)
         return {
-            "target_count": behavioral_target_course_count(session.student, sample_behavioral_profile(session.student, self.base_seed)),
+            "target_count": behavioral_target_course_count(session.student, profile),
             "attention_window_size": len(scored_candidates),
             "attention_window_top": [course_context(item) for item in scored_candidates[:12]],
             "selected_courses": selected_rows,

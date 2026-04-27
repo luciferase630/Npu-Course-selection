@@ -14,6 +14,15 @@ PERSONA_MIX = {
     "novice_student": 0.10,
 }
 
+BEHAVIORAL_CATEGORY_LIMITS = {
+    "Foundation": 2,
+    "English": 1,
+    "MajorCore": 4,
+    "MajorElective": 2,
+    "PE": 1,
+    "LabSeminar": 1,
+}
+
 
 @dataclass(frozen=True)
 class BehavioralProfile:
@@ -167,6 +176,10 @@ def requirement_score(
 ) -> float:
     if requirement is None:
         return 0.0
+    # The final boost is derived_penalty * factor. Required courses still get
+    # the largest boost because their derived_penalty base is much larger than
+    # optional targets; optional targets use a larger factor so they remain
+    # visible in the finite attention window.
     factor = 0.10
     if requirement.requirement_type == "required":
         factor += 0.025 * profile.deadline_focus
@@ -195,8 +208,8 @@ def score_behavioral_candidate(
         crowding_component = profile.herding_tendency * crowding * 8.0 - (1.0 - profile.herding_tendency) * perceived_crowding * 4.0
     else:
         crowding_component = -abs(profile.herding_tendency) * perceived_crowding * 14.0
-    if crowding > 0.8:
-        crowding_component -= profile.ex_ante_risk_aversion * (crowding - 0.8) * 10.0
+    if perceived_crowding > 0.8:
+        crowding_component -= profile.ex_ante_risk_aversion * (perceived_crowding - 0.8) * 10.0
     inertia_component = 12.0 * profile.inertia if previous_selected else 0.0
     noise_component = (rng.gauss(0.0, profile.exploration_rate * 18.0) if rng is not None else 0.0)
     score = utility + requirement_component + category_component + crowding_component + inertia_component + noise_component
@@ -205,6 +218,7 @@ def score_behavioral_candidate(
         "requirement": round(requirement_component, 4),
         "category": round(category_component, 4),
         "crowding": round(crowding_component, 4),
+        "perceived_crowding": round(perceived_crowding, 4),
         "inertia": round(inertia_component, 4),
         "noise": round(noise_component, 4),
         "total": round(score, 4),

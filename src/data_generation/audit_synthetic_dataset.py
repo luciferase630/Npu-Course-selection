@@ -18,6 +18,7 @@ from src.data_generation.generate_synthetic_mvp import (
 from src.data_generation.io import read_csv_rows
 from src.models import CourseRequirement, Student, UtilityEdge
 from src.student_agents.behavioral import (
+    BEHAVIORAL_CATEGORY_LIMITS,
     behavioral_target_course_count,
     sample_behavioral_profile,
     score_behavioral_candidate,
@@ -176,7 +177,6 @@ def build_competition_pressure_summary(
         selected_categories: Counter[str] = Counter()
         selected_count = 0
         selected_credits = 0.0
-        category_limits = {"Foundation": 2, "English": 1, "MajorCore": 4, "MajorElective": 2, "PE": 1, "LabSeminar": 1}
         for pass_index in range(2):
             for _score, _components, edge, course, _is_requirement in attended_edges:
                 course_code = str(course.get("course_code", ""))
@@ -185,7 +185,7 @@ def build_competition_pressure_summary(
                 category = str(course.get("category", ""))
                 if selected_count >= target_count:
                     break
-                if pass_index == 0 and selected_categories[category] >= category_limits.get(category, target_count):
+                if pass_index == 0 and selected_categories[category] >= BEHAVIORAL_CATEGORY_LIMITS.get(category, target_count):
                     continue
                 if course_code in selected_codes:
                     continue

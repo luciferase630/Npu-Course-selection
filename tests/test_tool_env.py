@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import unittest
 
+from src.data_generation import audit_synthetic_dataset
 from src.models import BidState, Course, CourseRequirement, Student, UtilityEdge
 from src.llm_clients.behavioral_client import BehavioralAgentClient
 from src.llm_clients.mock_client import MockLLMClient
 from src.student_agents.tool_env import StudentSession
-from src.student_agents.behavioral import sample_behavioral_profile
+from src.student_agents.behavioral import (
+    BEHAVIORAL_CATEGORY_LIMITS,
+    BehavioralProfile,
+    behavioral_target_course_count,
+    requirement_score,
+    sample_behavioral_profile,
+    score_behavioral_candidate,
+)
 
 
 def make_session() -> StudentSession:
@@ -206,6 +214,66 @@ class ToolEnvTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, different)
 
+    def test_requirement_score_actual_boost_order_matches_policy(self) -> None:
+        session = make_session()
+        profile = sample_behavioral_profile(session.student, 123)
+        required = CourseRequirement("S001", "A", "required", "degree_blocking")
+        strong = CourseRequirement("S001", "B", "strong_elective_requirement", "normal")
+        optional = CourseRequirement("S001", "C", "optional_target", "low")
+        self.assertGreater(requirement_score(required, 160, profile), requirement_score(strong, 80, profile))
+        self.assertGreater(requirement_score(strong, 80, profile), requirement_score(optional, 28, profile))
+
+    def test_crowding_penalty_uses_perceived_crowding_for_overconfidence(self) -> None:
+        base = BehavioralProfile(
+            persona="balanced_student",
+            overconfidence=0.0,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.0,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.5,
+            category_bias={},
+        )
+        overconfident = BehavioralProfile(
+            persona="aggressive_student",
+            overconfidence=0.75,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.0,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.5,
+            category_bias={},
+        )
+        _base_score, base_components = score_behavioral_candidate(
+            utility=50,
+            category="MajorCore",
+            requirement=None,
+            derived_penalty=0,
+            crowding=1.2,
+            previous_selected=False,
+            profile=base,
+        )
+        _over_score, over_components = score_behavioral_candidate(
+            utility=50,
+            category="MajorCore",
+            requirement=None,
+            derived_penalty=0,
+            crowding=1.2,
+            previous_selected=False,
+            profile=overconfident,
+        )
+        self.assertEqual(over_components["perceived_crowding"], 0.795)
+        self.assertGreater(over_components["crowding"], base_components["crowding"])
+
+    def test_behavioral_category_limits_are_shared_with_audit(self) -> None:
+        self.assertIs(audit_synthetic_dataset.BEHAVIORAL_CATEGORY_LIMITS, BEHAVIORAL_CATEGORY_LIMITS)
+
     def test_behavioral_tool_interaction_records_raw_outputs_and_explanations(self) -> None:
         session = make_session()
         result = BehavioralAgentClient(base_seed=123).interact("system", session, max_rounds=10)
@@ -219,6 +287,77 @@ class ToolEnvTests(unittest.TestCase):
         self.assertIn("raw_model_content", first_round)
         self.assertIn("decision_explanation", first_round)
         self.assertIn("decision_explanation", first_round["tool_request"])
+        context = result["behavioral_decision_context"]
+        self.assertEqual(
+            context["target_count"],
+            behavioral_target_course_count(session.student, sample_behavioral_profile(session.student, 123)),
+        )
+        self.assertLessEqual(len(context["selected_courses"]), context["target_count"])
+        self.assertGreater(len(context["selected_courses"]), 0)
+        self.assertEqual(
+            result["tool_trace"][-1]["tool_request"]["behavioral_decision_context"]["target_count"],
+            context["target_count"],
+        )
+
+    def test_behavioral_complete_and_interact_sample_same_persona(self) -> None:
+        session = make_session()
+        payload = {
+            "student_private_context": {
+                "student_id": session.student.student_id,
+                "budget_initial": session.student.budget_initial,
+                "risk_type": session.student.risk_type,
+                "credit_cap": session.student.credit_cap,
+                "bean_cost_lambda": session.student.bean_cost_lambda,
+                "grade_stage": session.student.grade_stage,
+                "course_code_requirements": [
+                    {
+                        "course_code": requirement.course_code,
+                        "requirement_type": requirement.requirement_type,
+                        "requirement_priority": requirement.requirement_priority,
+                        "deadline_term": requirement.deadline_term,
+                        "derived_missing_required_penalty": session.derived_penalties.get(
+                            (session.student.student_id, requirement.course_code),
+                            0,
+                        ),
+                    }
+                    for requirement in session.requirements
+                ],
+                "available_course_sections": [
+                    {
+                        "course_id": course.course_id,
+                        "course_code": course.course_code,
+                        "category": course.category,
+                        "capacity": course.capacity,
+                        "credit": course.credit,
+                        "time_slot": course.time_slot,
+                        "utility": session.edges[(session.student.student_id, course.course_id)].utility,
+                    }
+                    for course in session.courses.values()
+                ],
+            },
+            "state_snapshot": {
+                "time_point": session.time_point,
+                "time_points_total": session.time_points_total,
+                "time_to_deadline": session.time_points_total - session.time_point,
+                "budget_available": session.student.budget_initial,
+                "course_states": [
+                    {
+                        "course_id": course_id,
+                        "observed_waitlist_count": 0,
+                        "previous_selected": False,
+                        "previous_bid": 0,
+                    }
+                    for course_id in session.available_course_ids
+                ],
+            },
+        }
+        client = BehavioralAgentClient(base_seed=123)
+        complete_result = client.complete("system", payload)
+        interact_result = client.interact("system", session, max_rounds=10)
+        self.assertEqual(
+            complete_result["behavioral_profile"]["persona"],
+            interact_result["behavioral_profile"]["persona"],
+        )
 
     def test_mock_client_is_legacy_behavioral_alias(self) -> None:
         session = make_session()
