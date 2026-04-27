@@ -393,6 +393,9 @@ def _providers_from_env() -> list[OpenAIProvider]:
         if provider is not None:
             providers.append(provider)
         index += 1
+    mimo_provider = _provider_from_env("MIMO_OPENAI", OpenAI, required=False)
+    if mimo_provider is not None and all(provider.name != mimo_provider.name for provider in providers):
+        providers.append(mimo_provider)
     return [provider for provider in providers if provider is not None]
 
 

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.llm_clients.openai_client import (
     OpenAICompatibleClient,
     OpenAIProvider,
+    _providers_from_env,
     _response_usage,
     build_tool_messages,
     extract_decision_explanation,
@@ -57,6 +60,13 @@ class FakeOpenAIClient:
     def __init__(self, *, chat_create: FakeCreate | None = None, responses_create: FakeCreate | None = None) -> None:
         self.chat = Obj(completions=chat_create or FakeCreate(chat_response('{"ok": true}')))
         self.responses = responses_create or FakeCreate(responses_response('{"ok": true}'))
+
+
+class FakeOpenAIClass:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+        self.chat = Obj(completions=FakeCreate(chat_response('{"ok": true}')))
+        self.responses = FakeCreate(responses_response('{"ok": true}'))
 
 
 class OpenAIEnvLoadingTests(unittest.TestCase):
@@ -208,6 +218,38 @@ class OpenAIEnvLoadingTests(unittest.TestCase):
     def test_response_usage_accepts_responses_token_names(self) -> None:
         usage = _response_usage(responses_response("{}", input_tokens=11, output_tokens=7))
         self.assertEqual(usage, {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18})
+
+    def test_mimo_openai_env_is_loaded_as_fallback_provider_alias(self) -> None:
+        old_values = {
+            key: os.environ.get(key)
+            for key in [
+                "OPENAI_API_KEY",
+                "OPENAI_MODEL",
+                "OPENAI_PROVIDER_NAME",
+                "MIMO_OPENAI_API_KEY",
+                "MIMO_OPENAI_MODEL",
+                "MIMO_OPENAI_BASE_URL",
+            ]
+        }
+        for key in old_values:
+            os.environ.pop(key, None)
+        try:
+            os.environ["OPENAI_API_KEY"] = "primary-key"
+            os.environ["OPENAI_MODEL"] = "primary-model"
+            os.environ["OPENAI_PROVIDER_NAME"] = "primary"
+            os.environ["MIMO_OPENAI_API_KEY"] = "mimo-key"
+            os.environ["MIMO_OPENAI_MODEL"] = "mimo-model"
+            os.environ["MIMO_OPENAI_BASE_URL"] = "https://mimo.example/v1"
+            with patch.dict("sys.modules", {"openai": types.SimpleNamespace(OpenAI=FakeOpenAIClass)}):
+                loaded = _providers_from_env()
+            self.assertEqual([provider.name for provider in loaded], ["primary", "MIMO_OPENAI"])
+            self.assertEqual(loaded[1].model, "mimo-model")
+        finally:
+            for key, value in old_values.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 if __name__ == "__main__":
