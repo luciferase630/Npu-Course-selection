@@ -4,6 +4,7 @@ import argparse
 import json
 import random
 import time
+from collections import Counter
 from pathlib import Path
 
 from src.auction_mechanism.allocation import allocate_courses, compute_all_pay_budgets
@@ -450,7 +451,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run single-round all-pay MVP experiment.")
     parser.add_argument("--config", default="configs/simple_model.yaml")
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--agent", default="mock", choices=["mock", "openai"])
+    parser.add_argument("--agent", default="behavioral", choices=["behavioral", "mock", "openai"])
     parser.add_argument("--experiment-group", default="E0_llm_natural_baseline")
     parser.add_argument("--script-policy", default="utility_weighted")
     parser.add_argument("--seed-offset", type=int, default=0)
@@ -477,8 +478,10 @@ def main() -> None:
     interaction_mode = args.interaction_mode or llm_context_config.get("interaction_mode", "single_shot")
     system_prompt = load_system_prompt(config)
     tool_system_prompt = load_tool_system_prompt(config)
+    requested_agent = args.agent
+    effective_agent = "behavioral" if requested_agent == "mock" else requested_agent
     try:
-        llm_client = build_llm_client(args.agent)
+        llm_client = build_llm_client(requested_agent, base_seed=seed)
     except RuntimeError as exc:
         raise SystemExit(f"LLM client setup failed: {exc}") from None
 
@@ -490,7 +493,7 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
     agent_type_by_student = {
-        student_id: ("scripted_policy" if student_id in scripted_students else args.agent) for student_id in student_ids
+        student_id: ("scripted_policy" if student_id in scripted_students else effective_agent) for student_id in student_ids
     }
     available_by_student = {
         student_id: sorted(course_id for (sid, course_id), edge in edges.items() if sid == student_id and edge.eligible)
@@ -527,6 +530,7 @@ def main() -> None:
     llm_api_prompt_tokens = 0
     llm_api_completion_tokens = 0
     llm_api_total_tokens = 0
+    behavioral_profile_counts: Counter[str] = Counter()
     processed_decisions = 0
     total_decisions = time_points * len(student_ids)
 
@@ -576,6 +580,8 @@ def main() -> None:
             attempts = []
             retry_feedback = None
             model_decision_explanation = ""
+            behavioral_profile_for_trace = {}
+            behavioral_decision_context_for_trace = {}
             retry_config = config.get("llm_context", {})
             max_retries = int(retry_config.get("max_retries_on_invalid_output", 1))
             max_attempts = 1 if agent_type == "scripted_policy" else 1 + max(0, max_retries)
@@ -641,6 +647,13 @@ def main() -> None:
                 llm_api_completion_tokens += int(tool_result.get("api_completion_tokens", 0))
                 llm_api_total_tokens += int(tool_result.get("api_total_tokens", 0))
                 tool_submit_rejected_count += int(tool_result.get("submit_rejected_count", 0))
+                behavioral_profile = tool_result.get("behavioral_profile", {})
+                if isinstance(behavioral_profile, dict) and behavioral_profile.get("persona"):
+                    behavioral_profile_for_trace = behavioral_profile
+                    behavioral_profile_counts[str(behavioral_profile["persona"])] += 1
+                behavioral_decision_context = tool_result.get("behavioral_decision_context", {})
+                if isinstance(behavioral_decision_context, dict):
+                    behavioral_decision_context_for_trace = behavioral_decision_context
                 if tool_result.get("round_limit_reached"):
                     tool_round_limit_count += 1
                 raw_output = tool_result.get("final_tool_request")
@@ -864,6 +877,8 @@ def main() -> None:
                     "raw_model_output": raw_output,
                     "parsed_output": raw_output if applied else None,
                     "model_decision_explanation": model_decision_explanation,
+                    "behavioral_profile": behavioral_profile_for_trace,
+                    "behavioral_decision_context": behavioral_decision_context_for_trace,
                     "validation_result": {"valid": applied, "error": "" if applied else validation.error},
                     "final_output": final_source,
                     "attempts": attempts,
@@ -1020,6 +1035,8 @@ def main() -> None:
     metrics = {
         "run_id": args.run_id,
         "experiment_group": args.experiment_group,
+        "agent_requested": requested_agent,
+        "agent_effective": effective_agent,
         "interaction_mode": interaction_mode,
         "n_students": len(students),
         "n_courses": len(courses),
@@ -1069,6 +1086,7 @@ def main() -> None:
         "llm_api_completion_tokens": llm_api_completion_tokens,
         "llm_api_total_tokens": llm_api_total_tokens,
         "behavior_tag_counts": count_behavior_tags(bid_events),
+        "behavioral_profile_counts": dict(sorted(behavioral_profile_counts.items())),
         "elapsed_seconds": round(time.perf_counter() - started_at, 4),
     }
     (output_root / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")

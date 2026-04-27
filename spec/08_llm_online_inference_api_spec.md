@@ -48,7 +48,7 @@ OPENAI_BASE_URL=https://api.xiaomimimo.com/v1
 
 密钥不得写入 YAML、CSV、trace、README、spec 正文示例或 git 提交。`OPENAI_BASE_URL` 只用于兼容其他 OpenAI API 格式服务。
 
-未设置 `OPENAI_API_KEY` 或 `OPENAI_MODEL` 时，`--agent openai` 必须直接报错并说明缺失字段，不能静默降级为 mock。
+未设置 `OPENAI_API_KEY` 或 `OPENAI_MODEL` 时，`--agent openai` 必须直接报错并说明缺失字段，不能静默降级为 behavioral。
 
 ## 3. 运行命令
 

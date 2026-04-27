@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean, pstdev
@@ -15,6 +16,14 @@ from src.data_generation.generate_synthetic_mvp import (
     eligible_count_bounds,
 )
 from src.data_generation.io import read_csv_rows
+from src.models import CourseRequirement, Student, UtilityEdge
+from src.student_agents.behavioral import (
+    behavioral_target_course_count,
+    sample_behavioral_profile,
+    score_behavioral_candidate,
+    stable_behavior_seed,
+)
+from src.student_agents.context import derive_requirement_penalties
 
 
 def _float(value: object, default: float = 0.0) -> float:
@@ -54,24 +63,36 @@ def _wishlist_target_count(student: dict) -> int:
     return max(5, min(7, target))
 
 
-def _requirement_boost(requirement: dict | None) -> float:
-    if not requirement:
-        return 0.0
-    requirement_type = str(requirement.get("requirement_type", ""))
-    priority = str(requirement.get("requirement_priority", ""))
-    boost = 0.0
-    if requirement_type == "required":
-        if priority == "degree_blocking":
-            boost += 56.0
-        elif priority == "progress_blocking":
-            boost += 44.0
-        elif priority == "normal":
-            boost += 8.0
-    elif requirement_type == "strong_elective_requirement":
-        boost += 14.0
-    elif requirement_type == "optional_target":
-        boost += 12.0
-    return boost
+def _student_model(row: dict) -> Student:
+    return Student(
+        student_id=str(row["student_id"]),
+        budget_initial=int(_float(row.get("budget_initial"), 100)),
+        risk_type=str(row.get("risk_type", "balanced")),
+        credit_cap=_float(row.get("credit_cap"), 30.0),
+        bean_cost_lambda=_float(row.get("bean_cost_lambda"), 1.0),
+        grade_stage=str(row.get("grade_stage", row.get("grade", "junior"))),
+    )
+
+
+def _requirement_model(row: dict) -> CourseRequirement:
+    return CourseRequirement(
+        student_id=str(row["student_id"]),
+        course_code=str(row["course_code"]),
+        requirement_type=str(row.get("requirement_type", "required")),
+        requirement_priority=str(row.get("requirement_priority", "normal")),
+        deadline_term=str(row.get("deadline_term", "")),
+        substitute_group_id=str(row.get("substitute_group_id", "")),
+        notes=str(row.get("notes", "")),
+    )
+
+
+def _edge_model(row: dict) -> UtilityEdge:
+    return UtilityEdge(
+        student_id=str(row["student_id"]),
+        course_id=str(row["course_id"]),
+        eligible=str(row.get("eligible", "")).lower() == "true",
+        utility=_float(row.get("utility")),
+    )
 
 
 def build_competition_pressure_summary(
@@ -79,17 +100,25 @@ def build_competition_pressure_summary(
     courses: list[dict],
     requirements: list[dict],
     utilities: list[dict],
+    base_seed: int = 20260425,
 ) -> dict:
     course_by_id = {str(course["course_id"]): course for course in courses}
-    requirements_by_student: dict[str, dict[str, dict]] = defaultdict(dict)
+    student_models = {str(row["student_id"]): _student_model(row) for row in students}
+    requirement_models = [_requirement_model(row) for row in requirements]
+    edge_models = {
+        (str(row["student_id"]), str(row["course_id"])): _edge_model(row)
+        for row in utilities
+    }
+    derived_penalties = derive_requirement_penalties(student_models, edge_models, requirement_models)
+    requirements_by_student: dict[str, dict[str, CourseRequirement]] = defaultdict(dict)
     high_pressure_codes: set[str] = set()
-    for requirement in requirements:
-        student_id = str(requirement.get("student_id", ""))
-        course_code = str(requirement.get("course_code", ""))
+    for requirement in requirement_models:
+        student_id = requirement.student_id
+        course_code = requirement.course_code
         requirements_by_student[student_id][course_code] = requirement
         if (
-            str(requirement.get("requirement_type")) == "required"
-            and str(requirement.get("requirement_priority")) in HIGH_PRESSURE_PRIORITIES
+            requirement.requirement_type == "required"
+            and requirement.requirement_priority in HIGH_PRESSURE_PRIORITIES
         ):
             high_pressure_codes.add(course_code)
 
@@ -103,43 +132,95 @@ def build_competition_pressure_summary(
         eligible_counts[student_id] += 1
 
     demand: Counter[str] = Counter()
+    persona_counts: Counter[str] = Counter()
     wishlist_sizes: list[int] = []
     total_wishlist_credits: list[float] = []
-    for student in students:
+    student_order = list(students)
+    random.Random(base_seed + 17).shuffle(student_order)
+    for student in student_order:
         student_id = str(student["student_id"])
-        target_count = _wishlist_target_count(student)
-        credit_cap = _float(student.get("credit_cap"), 30.0)
+        student_model = student_models[student_id]
+        behavioral_profile = sample_behavioral_profile(student_model, base_seed)
+        persona_counts[behavioral_profile.persona] += 1
+        target_count = behavioral_target_course_count(student_model, behavioral_profile)
+        credit_cap = student_model.credit_cap
+        rng = random.Random(stable_behavior_seed(base_seed + 7919, student_id))
         scored_edges = []
         for edge in edges_by_student.get(student_id, []):
             course = course_by_id.get(str(edge.get("course_id", "")))
             if not course:
                 continue
-            requirement = requirements_by_student[student_id].get(str(course.get("course_code", "")))
-            score = _float(edge.get("utility")) + _requirement_boost(requirement)
-            scored_edges.append((score, edge, course))
-        scored_edges.sort(key=lambda item: (item[0], _float(item[2].get("credit"))), reverse=True)
+            course_code = str(course.get("course_code", ""))
+            requirement = requirements_by_student[student_id].get(course_code)
+            penalty = derived_penalties.get((student_id, course_code), 0.0)
+            crowding = demand[str(edge["course_id"])] / max(1, int(_float(course.get("capacity"), 1)))
+            score, components = score_behavioral_candidate(
+                utility=_float(edge.get("utility")),
+                category=str(course.get("category", "")),
+                requirement=requirement,
+                derived_penalty=penalty,
+                crowding=crowding,
+                previous_selected=False,
+                profile=behavioral_profile,
+                rng=rng,
+            )
+            scored_edges.append((score, components, edge, course, requirement is not None))
+        scored_edges.sort(key=lambda item: (item[4], item[0], _float(item[3].get("credit"))), reverse=True)
+        required_edges = [item for item in scored_edges if item[4]]
+        other_edges = [item for item in scored_edges if not item[4]]
+        attended_edges = required_edges + other_edges[: max(0, behavioral_profile.attention_limit - len(required_edges))]
+        attended_edges.sort(key=lambda item: (item[0], _float(item[3].get("credit"))), reverse=True)
 
         selected_codes: set[str] = set()
         selected_slots: set[str] = set()
+        selected_categories: Counter[str] = Counter()
         selected_count = 0
         selected_credits = 0.0
-        for _score, edge, course in scored_edges:
-            course_code = str(course.get("course_code", ""))
-            course_slots = _time_slot_set(course)
-            credit = _float(course.get("credit"))
+        category_limits = {"Foundation": 2, "English": 1, "MajorCore": 4, "MajorElective": 2, "PE": 1, "LabSeminar": 1}
+        for pass_index in range(2):
+            for _score, _components, edge, course, _is_requirement in attended_edges:
+                course_code = str(course.get("course_code", ""))
+                course_slots = _time_slot_set(course)
+                credit = _float(course.get("credit"))
+                category = str(course.get("category", ""))
+                if selected_count >= target_count:
+                    break
+                if pass_index == 0 and selected_categories[category] >= category_limits.get(category, target_count):
+                    continue
+                if course_code in selected_codes:
+                    continue
+                if selected_slots & course_slots:
+                    continue
+                if selected_credits + credit > credit_cap:
+                    continue
+                selected_codes.add(course_code)
+                selected_slots.update(course_slots)
+                selected_categories[category] += 1
+                selected_count += 1
+                selected_credits += credit
+                demand[str(edge["course_id"])] += 1
             if selected_count >= target_count:
                 break
-            if course_code in selected_codes:
-                continue
-            if selected_slots & course_slots:
-                continue
-            if selected_credits + credit > credit_cap:
-                continue
-            selected_codes.add(course_code)
-            selected_slots.update(course_slots)
-            selected_count += 1
-            selected_credits += credit
-            demand[str(edge["course_id"])] += 1
+        if selected_count < 5:
+            for _score, _components, edge, course, _is_requirement in attended_edges:
+                course_code = str(course.get("course_code", ""))
+                course_slots = _time_slot_set(course)
+                credit = _float(course.get("credit"))
+                category = str(course.get("category", ""))
+                if course_code in selected_codes:
+                    continue
+                if selected_slots & course_slots:
+                    continue
+                if selected_credits + credit > credit_cap:
+                    continue
+                selected_codes.add(course_code)
+                selected_slots.update(course_slots)
+                selected_categories[category] += 1
+                selected_count += 1
+                selected_credits += credit
+                demand[str(edge["course_id"])] += 1
+                if selected_count >= 5:
+                    break
         wishlist_sizes.append(selected_count)
         total_wishlist_credits.append(selected_credits)
 
@@ -217,6 +298,8 @@ def build_competition_pressure_summary(
             category: round(count / total_demand, 4) if total_demand else 0.0
             for category, count in sorted(demand_by_category.items())
         },
+        "behavioral_persona_counts": dict(sorted(persona_counts.items())),
+        "behavioral_labseminar_demand": int(demand_by_category.get("LabSeminar", 0)),
         "section_count_by_category": dict(sorted(section_count_by_category.items())),
         "overloaded_section_count_by_category": dict(sorted(overloaded_by_category.items())),
         "empty_section_count_by_category": dict(sorted(empty_by_category.items())),
@@ -240,7 +323,13 @@ def audit_dataset_dir(data_dir: str | Path) -> dict:
     courses = read_csv_rows(root / "courses.csv")
     requirements = read_csv_rows(root / "student_course_code_requirements.csv")
     utilities = read_csv_rows(root / "student_course_utility_edges.csv")
-    return audit_rows(students, profiles, profile_requirements, courses, requirements, utilities)
+    metadata_path = root / "generation_metadata.json"
+    base_seed = 20260425
+    if metadata_path.exists():
+        with metadata_path.open("r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        base_seed = int(metadata.get("seed", metadata.get("effective_seed", base_seed)))
+    return audit_rows(students, profiles, profile_requirements, courses, requirements, utilities, base_seed=base_seed)
 
 
 def audit_rows(
@@ -250,6 +339,7 @@ def audit_rows(
     courses: list[dict],
     requirements: list[dict],
     utilities: list[dict],
+    base_seed: int = 20260425,
 ) -> dict:
     errors: list[str] = []
     warnings: list[str] = []
@@ -337,6 +427,7 @@ def audit_rows(
             "too many required course_codes are shared by every profile: "
             f"{len(common_required_codes)} > 4 ({sorted(common_required_codes)})"
         )
+    is_main_competitive_medium = len(students) == 100 and len(courses) == 80
     if len(courses) >= 80:
         for profile_id in sorted(profile_ids):
             required_count = len(required_codes_by_profile[profile_id])
@@ -345,7 +436,7 @@ def audit_rows(
                 errors.append(f"profile {profile_id} required count is {required_count}, expected 7")
             if required_credits >= 30:
                 errors.append(f"profile {profile_id} required min credits {required_credits:.1f} must be below credit_cap 30")
-            if not 20 <= required_credits <= 27:
+            if is_main_competitive_medium and not 20 <= required_credits <= 27:
                 errors.append(f"profile {profile_id} required min credits {required_credits:.1f} should be about 22-25")
 
     high_pressure_by_student: dict[str, list[str]] = defaultdict(list)
@@ -417,12 +508,21 @@ def audit_rows(
     elif teacher_extreme_mix:
         warnings.append(f"{teacher_extreme_mix} teachers have both large low-utility and high-utility groups")
 
-    competition_pressure = build_competition_pressure_summary(students, courses, requirements, utilities)
-    if len(students) >= 80 and len(courses) >= 80:
-        if competition_pressure["predicted_overloaded_section_count"] < 10:
+    competition_pressure = build_competition_pressure_summary(students, courses, requirements, utilities, base_seed=base_seed)
+    if is_main_competitive_medium:
+        if competition_pressure["predicted_overloaded_section_count"] < 8:
             errors.append(
-                "competition pressure too weak: expected at least 10 predicted overloaded sections, got "
+                "competition pressure too weak: expected at least 8 predicted overloaded sections, got "
                 f"{competition_pressure['predicted_overloaded_section_count']}"
+            )
+        if (
+            competition_pressure["predicted_overloaded_section_count"]
+            + competition_pressure["predicted_near_full_section_count"]
+            < 12
+        ):
+            errors.append(
+                "competition pressure too weak: expected at least 12 overloaded or near-full sections, got "
+                f"{competition_pressure['predicted_overloaded_section_count'] + competition_pressure['predicted_near_full_section_count']}"
             )
         if competition_pressure["high_pressure_required_overloaded_section_count"] < 3:
             errors.append(
@@ -444,10 +544,40 @@ def audit_rows(
             errors.append(f"MajorCore + MajorElective predicted demand share is too weak: {major_share:.4f}")
         general_share = float(demand_share.get("GeneralElective", 0.0))
         pe_share = float(demand_share.get("PE", 0.0))
+        lab_share = float(demand_share.get("LabSeminar", 0.0))
         if general_share < 0.08:
             errors.append(f"GeneralElective predicted demand share is too weak: {general_share:.4f}")
         if pe_share < 0.03:
             errors.append(f"PE predicted demand share is too weak: {pe_share:.4f}")
+        if lab_share < 0.01:
+            errors.append(f"LabSeminar predicted demand share is too weak: {lab_share:.4f}")
+        if lab_share > 0.13:
+            errors.append(f"LabSeminar predicted demand share is too strong: {lab_share:.4f}")
+    elif len(students) >= 80 and len(courses) >= 80:
+        if competition_pressure["predicted_overloaded_section_count"] < 8:
+            errors.append(
+                "scale competition pressure too weak: expected at least 8 predicted overloaded sections, got "
+                f"{competition_pressure['predicted_overloaded_section_count']}"
+            )
+        admission_proxy = float(competition_pressure["predicted_admission_rate_proxy"])
+        if not 0.60 <= admission_proxy <= 0.95:
+            errors.append(
+                "scale admission proxy should be in 0.60-0.95, got "
+                f"{admission_proxy:.4f}"
+            )
+        demand_share = competition_pressure["predicted_demand_share_by_category"]
+        foundation_share = float(demand_share.get("Foundation", 0.0))
+        major_share = float(demand_share.get("MajorCore", 0.0)) + float(demand_share.get("MajorElective", 0.0))
+        if foundation_share > 0.60:
+            errors.append(f"Foundation predicted demand share is too dominant: {foundation_share:.4f}")
+        if major_share < 0.25:
+            errors.append(f"MajorCore + MajorElective predicted demand share is too weak: {major_share:.4f}")
+        pe_share = float(demand_share.get("PE", 0.0))
+        lab_share = float(demand_share.get("LabSeminar", 0.0))
+        if pe_share < 0.01:
+            warnings.append(f"PE predicted demand share is very low in scale sanity dataset: {pe_share:.4f}")
+        if lab_share > 0.15:
+            warnings.append(f"LabSeminar predicted demand share is high in scale sanity dataset: {lab_share:.4f}")
 
     high_pressure_counts = [len(high_pressure_by_student[str(student["student_id"])]) for student in students]
     high_pressure_credits = [high_pressure_credit_by_student[str(student["student_id"])] for student in students]

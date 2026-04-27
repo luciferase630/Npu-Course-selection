@@ -8,8 +8,9 @@
 - `student_course_utility_edges.csv` 仍必须是完整边表，但 `eligible=false` 是允许且必要的行政资格信号。
 - `medium` 每个学生 eligible 数量目标为 `45-70 / 80`；每条 student requirement 必须能找到至少一个 eligible section。
 - 审计不使用“总容量 / 总学生数”判断竞争强度。竞争应来自热门必修、好老师、高 utility 和关键课程的局部超载，而不是每门课平均满员。
-- `audit_synthetic_dataset.py` 必须输出 `competition_pressure`：预测 demand/capacity、超载 section 数、近满 section 数、空 section 数、高压力 required 超载情况、category demand share、p90/max competition ratio 和 predicted admission proxy。
-- `medium` 通过门槛：`predicted_overloaded_section_count >= 10`，高压力 required 中至少若干 section 超载，`predicted_admission_rate_proxy` 约 `0.75-0.90`，且 Foundation demand 不能垄断。冷门选修空课只记录，不作为失败。
+- `audit_synthetic_dataset.py` 必须用 behavioral agent 同源评分输出 `competition_pressure`：预测 demand/capacity、超载 section 数、近满 section 数、空 section 数、高压力 required 超载情况、category demand share、persona demand share、p90/max competition ratio 和 predicted admission proxy。
+- `medium` 通过门槛：`predicted_overloaded_section_count >= 8`，且 `predicted_overloaded_section_count + predicted_near_full_section_count >= 12`；高压力 required 中至少若干 section 超载，`predicted_admission_rate_proxy` 约 `0.75-0.92`，且 Foundation demand 不能垄断。冷门选修空课只记录，不作为失败。
+- `custom` scale sanity（例如 `300×120×1`）使用较宽阈值，只确认生成器、audit 与 runtime 可扩展；PE 等类别分布异常可先作为 warning，不阻塞主实验数据集。
 - 午饭时段 `5-6` 继续严格低频：目标 `<=3%`，硬上限 `<=4%`。
 
 本文定义合成数据集生成后的审阅标准。它用于检查数据是否足够真实、是否符合建模口径、是否会因为生成偏差污染实验结论。默认审阅对象是 `medium`，同一组结构性检查也适用于 `custom` 小规模数据集。

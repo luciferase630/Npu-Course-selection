@@ -3,8 +3,10 @@ from __future__ import annotations
 import unittest
 
 from src.models import BidState, Course, CourseRequirement, Student, UtilityEdge
+from src.llm_clients.behavioral_client import BehavioralAgentClient
 from src.llm_clients.mock_client import MockLLMClient
 from src.student_agents.tool_env import StudentSession
+from src.student_agents.behavioral import sample_behavioral_profile
 
 
 def make_session() -> StudentSession:
@@ -196,10 +198,20 @@ class ToolEnvTests(unittest.TestCase):
         self.assertIn("invalid_bid_items", result["conflict_summary"])
         self.assertEqual(result["must_fix"][0]["type"], "invalid_bid_items")
 
-    def test_mock_tool_interaction_records_raw_outputs_and_explanations(self) -> None:
+    def test_behavioral_profile_sampling_is_seed_stable(self) -> None:
         session = make_session()
-        result = MockLLMClient().interact("system", session, max_rounds=10)
+        first = sample_behavioral_profile(session.student, 123)
+        second = sample_behavioral_profile(session.student, 123)
+        different = sample_behavioral_profile(session.student, 124)
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, different)
+
+    def test_behavioral_tool_interaction_records_raw_outputs_and_explanations(self) -> None:
+        session = make_session()
+        result = BehavioralAgentClient(base_seed=123).interact("system", session, max_rounds=10)
         self.assertTrue(result["accepted"])
+        self.assertIn("behavioral_profile", result)
+        self.assertIn("persona", result["behavioral_profile"])
         self.assertGreater(result["explanation_count"], 0)
         self.assertIn("final_decision_explanation", result)
         self.assertTrue(result["final_decision_explanation"])
@@ -207,6 +219,12 @@ class ToolEnvTests(unittest.TestCase):
         self.assertIn("raw_model_content", first_round)
         self.assertIn("decision_explanation", first_round)
         self.assertIn("decision_explanation", first_round["tool_request"])
+
+    def test_mock_client_is_legacy_behavioral_alias(self) -> None:
+        session = make_session()
+        result = MockLLMClient(base_seed=123).interact("system", session, max_rounds=10)
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["behavioral_profile"]["persona"], sample_behavioral_profile(session.student, 123).persona)
 
 
 if __name__ == "__main__":

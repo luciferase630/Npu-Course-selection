@@ -32,7 +32,7 @@
 
 ## 4. 验收标准
 
-- `10学生 × 20教学班 × 3培养方案` mock E0 tool-based 能完成运行，`fallback_keep_previous_count=0`。
+- `10学生 × 20教学班 × 3培养方案` behavioral E0 tool-based 能完成运行，`fallback_keep_previous_count=0`。
 - MiMo E0 tool-based 小规模测试能在 `max_tool_rounds=10` 内完成提交；若工具提交被拒，trace 中必须能看到结构化 violations。
 - `single_shot` 回归测试保持通过，作为 legacy baseline。
 

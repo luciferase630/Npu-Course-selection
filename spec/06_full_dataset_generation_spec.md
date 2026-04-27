@@ -126,7 +126,7 @@ SE_2026,MCO008,required,normal,junior
 - 每个 profile 的 `required` course_code 数量为 `7` 门；它表示多年培养方案硬必修集合，不表示本轮必须全部修完。
 - `required` 结构为 3 门全校共同必修、1 门 profile-specific Foundation、3 门 profile-specific MajorCore。
 - MajorElective 不再补进 `required`；它们应作为 `strong_elective_requirement` 生成，保留学生的专业方向选择空间。
-- `optional_target` 目标为 3 门：2 门 GeneralElective 和 1 门 PE。
+- `optional_target` 目标为 4 门：2 门 GeneralElective、1 门 PE 和 1 门 LabSeminar。
 - `deadline_term` 必须按 `freshman`、`sophomore`、`junior`、`senior`、`graduation_term` 分层，不能统一填 `current`。
 - 本表不手填未完成惩罚数值；惩罚仍由运行时 `requirement_penalty_model` 派生。
 
@@ -194,7 +194,7 @@ is_required,release_round
 - profile-specific Foundation：约 `20-34`。
 - profile-specific MajorCore：约 `14-26`，用于形成专业内部真实竞争。
 - MajorElective：约 `8-18`，允许热门好老师 section 超载、冷门 section 空置。
-- GeneralElective、PE、LabSeminar：约 `5-12`，不强行均衡满员。
+- GeneralElective：约 `18-32`；PE、LabSeminar：约 `8-16`，不强行均衡满员。
 
 ## 6. 排课时间生成
 
@@ -319,7 +319,7 @@ utility = clamp(
   "n_course_sections": 80,
   "n_course_codes": 51,
   "profile_count": 4,
-  "profile_requirement_count": 52,
+  "profile_requirement_count": 56,
   "profile_requirement_summary": {},
   "time_block_distribution": {},
   "category_distribution": {},
@@ -367,7 +367,7 @@ data/synthetic/n10_c20_p3_seed42
 运行实验时也可以直接使用 `--data-dir` 覆盖数据源路径：
 
 ```powershell
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_mock --agent mock --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
 ```
 
 生成器必须 deterministic：同一 seed、同一配置、同一代码版本应生成完全相同的 CSV。

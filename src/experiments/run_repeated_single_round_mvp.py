@@ -13,7 +13,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run repeated single-round all-pay MVP experiments.")
     parser.add_argument("--config", default="configs/simple_model.yaml")
     parser.add_argument("--run-prefix", required=True)
-    parser.add_argument("--agent", default="mock", choices=["mock", "openai"])
+    parser.add_argument("--agent", default="behavioral", choices=["behavioral", "mock", "openai"])
     parser.add_argument("--experiment-group", default="E0_llm_natural_baseline")
     parser.add_argument("--script-policy", default="utility_weighted")
     parser.add_argument("--n-repetitions", type=int, default=None)

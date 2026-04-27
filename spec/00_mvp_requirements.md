@@ -25,7 +25,7 @@ MVP 只包含：
 - 学生能看到课程容量和当前待选人数。
 - 学生看不到任何人的投豆。
 - 大模型学生无策略提示词，只知道规则、目标、个人偏好和当前交互状态。
-- `E0_llm_natural_baseline`：全部学生由普通 mock/openai 代理决策。
+- `E0_llm_natural_baseline`：全部学生由普通 behavioral/openai 代理决策。
 - `E1_one_scripted_policy_agent`：1 个脚本策略学生插入普通代理市场。
 - `E2_10pct_scripted_policy_agents`：10% 脚本策略学生插入普通代理市场。
 - 动态预算、状态依赖豆子影子价格、基础课表约束前置检查和行为标签记录。

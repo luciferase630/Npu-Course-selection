@@ -153,12 +153,12 @@ experiments
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
 python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset custom --n-students 10 --n-course-sections 20 --n-profiles 3 --seed 42
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id demo_001 --agent mock --experiment-group E0_llm_natural_baseline
-python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_mock --agent mock --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
-python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_model.yaml --run-prefix e0_mock --agent mock --experiment-group E0_llm_natural_baseline --n-repetitions 50
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id demo_001 --agent behavioral --experiment-group E0_llm_natural_baseline
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42
+python -m src.experiments.run_repeated_single_round_mvp --config configs/simple_model.yaml --run-prefix e0_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --n-repetitions 50
 ```
 
-接入真实大模型时，把 `--agent mock` 改为 `--agent openai`，并提供 OpenAI-compatible 环境变量：
+接入真实大模型时，把 `--agent behavioral` 改为 `--agent openai`，并提供 OpenAI-compatible 环境变量：
 
 ```powershell
 $env:OPENAI_API_KEY="..."

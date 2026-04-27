@@ -288,11 +288,11 @@ class OpenAICompatibleClient:
         }
 
 
-def build_llm_client(agent: str):
-    if agent == "mock":
-        from src.llm_clients.mock_client import MockLLMClient
+def build_llm_client(agent: str, base_seed: int = 20260425):
+    if agent in {"behavioral", "mock"}:
+        from src.llm_clients.behavioral_client import BehavioralAgentClient
 
-        return MockLLMClient()
+        return BehavioralAgentClient(base_seed=base_seed)
     if agent == "openai":
         return OpenAICompatibleClient()
     raise ValueError(f"Unsupported agent: {agent}")

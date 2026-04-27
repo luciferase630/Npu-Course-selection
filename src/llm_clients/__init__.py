@@ -1,1 +1,1 @@
-"""LLM client implementations for mock and real API calls."""
+"""Agent client implementations for behavioral and real API calls."""

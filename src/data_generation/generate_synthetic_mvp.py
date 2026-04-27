@@ -433,6 +433,9 @@ def build_course_code_specs(profiles: list[dict] | None = None, n_course_codes: 
             elif category == "MajorElective":
                 tags = (profile_ids[(index - 1) % len(profile_ids)],)
                 public_required = False
+            elif category == "LabSeminar":
+                tags = (profile_ids[(index - 1) % len(profile_ids)],)
+                public_required = False
             else:
                 tags = tuple(profile_ids)
                 public_required = False
@@ -610,7 +613,7 @@ def generate_course_sections(
                 else:
                     ranges = {
                         "MajorElective": (10, 20),
-                        "GeneralElective": (8, 16),
+                        "GeneralElective": (18, 32),
                         "PE": (8, 16),
                         "LabSeminar": (8, 16),
                     }
@@ -704,6 +707,8 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
             optional_targets.append(general_electives[(profile_index * 2 + offset) % len(general_electives)].course_code)
         if by_category["PE"]:
             optional_targets.append(by_category["PE"][profile_index % len(by_category["PE"])].course_code)
+        if by_category["LabSeminar"]:
+            optional_targets.append(by_category["LabSeminar"][profile_index % len(by_category["LabSeminar"])].course_code)
         deadline_by_code = required_deadline_terms(required_codes)
         for code in required_codes:
             rows.append(
@@ -811,10 +816,10 @@ def student_category_affinity(rng: random.Random, profile: str) -> dict[str, flo
         "Foundation": rng.uniform(-4, 5),
         "MajorCore": rng.uniform(0, 8),
         "MajorElective": rng.uniform(-2, 10),
-        "GeneralElective": rng.uniform(16, 30),
+        "GeneralElective": rng.uniform(13, 25),
         "English": rng.uniform(-5, 5),
-        "PE": rng.uniform(4.5, 12.5),
-        "LabSeminar": rng.uniform(-7, 2),
+        "PE": rng.uniform(6, 14),
+        "LabSeminar": rng.uniform(10, 18),
     }
     if profile == "AI_2026":
         base["MajorElective"] += 2

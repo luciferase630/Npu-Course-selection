@@ -73,7 +73,7 @@
 - 这张表就是生成阶段的培养方案源表，必须实际输出，不能只输出学生级展开表。
 - 不同 profile 只应共享少量全校共同必修，也应有各自的专业核心课。当前 `medium` 目标为 `FND001`、`ENG001`、`MCO001` 三门共同 required，外加 1 门 profile-specific Foundation 和 3 门 profile-specific MajorCore，共 7 门 required。
 - MajorElective 不应补入 required，应作为 `strong_elective_requirement` 保留专业方向选择空间。
-- `optional_target` 目标为 2 门 GeneralElective 和 1 门 PE。
+- `optional_target` 目标为 4 门：2 门 GeneralElective、1 门 PE、1 门 LabSeminar。
 - `required` 表示多年培养方案硬事实，不等于本轮必须全部修完。
 - `deadline_term` 应按 `freshman`、`sophomore`、`junior`、`senior`、`graduation_term` 分层。
 - `student_course_code_requirements.csv` 应由 `students.csv.profile_id` 和 `profile_requirements.csv` 自动展开得到。

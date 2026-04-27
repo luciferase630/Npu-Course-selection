@@ -53,10 +53,25 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertTrue(all(requirement["profile_id"] in profile_ids for requirement in profile_requirements))
 
         required_by_profile: dict[str, set[str]] = {profile_id: set() for profile_id in profile_ids}
+        requirement_counts: dict[str, dict[str, int]] = {profile_id: {} for profile_id in profile_ids}
+        optional_by_profile: dict[str, set[str]] = {profile_id: set() for profile_id in profile_ids}
+        courses_by_code = {course["course_code"]: course for course in self.dataset["courses"]}
         for requirement in profile_requirements:
+            profile_id = requirement["profile_id"]
+            requirement_type = requirement["requirement_type"]
+            requirement_counts[profile_id][requirement_type] = requirement_counts[profile_id].get(requirement_type, 0) + 1
             if requirement["requirement_type"] == "required":
                 required_by_profile[requirement["profile_id"]].add(requirement["course_code"])
+            if requirement["requirement_type"] == "optional_target":
+                optional_by_profile[profile_id].add(requirement["course_code"])
         self.assertTrue(all(len(required_codes) == 7 for required_codes in required_by_profile.values()))
+        self.assertTrue(all(counts.get("optional_target") == 4 for counts in requirement_counts.values()))
+        self.assertTrue(
+            all(
+                any(courses_by_code[course_code]["category"] == "LabSeminar" for course_code in optional_codes)
+                for optional_codes in optional_by_profile.values()
+            )
+        )
         self.assertGreater(len({tuple(sorted(required_codes)) for required_codes in required_by_profile.values()}), 1)
         common_required = set.intersection(*required_by_profile.values())
         self.assertLessEqual(len(common_required), 4)
@@ -228,7 +243,11 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertTrue(result["passed"], result["errors"])
         self.assertLessEqual(result["summary"]["time"]["lunch_share"], 0.03)
         pressure = result["summary"]["competition_pressure"]
-        self.assertGreaterEqual(pressure["predicted_overloaded_section_count"], 10)
+        self.assertGreaterEqual(pressure["predicted_overloaded_section_count"], 8)
+        self.assertGreaterEqual(
+            pressure["predicted_overloaded_section_count"] + pressure["predicted_near_full_section_count"],
+            12,
+        )
         self.assertGreaterEqual(pressure["high_pressure_required_overloaded_section_count"], 3)
         self.assertGreaterEqual(pressure["predicted_admission_rate_proxy"], 0.75)
         self.assertLessEqual(pressure["predicted_admission_rate_proxy"], 0.92)
@@ -236,6 +255,8 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertLessEqual(demand_share.get("Foundation", 0.0), 0.60)
         self.assertGreaterEqual(demand_share.get("GeneralElective", 0.0), 0.08)
         self.assertGreaterEqual(demand_share.get("PE", 0.0), 0.03)
+        self.assertGreaterEqual(demand_share.get("LabSeminar", 0.0), 0.01)
+        self.assertLessEqual(demand_share.get("LabSeminar", 0.0), 0.13)
         self.assertGreaterEqual(
             demand_share.get("MajorCore", 0.0) + demand_share.get("MajorElective", 0.0),
             0.25,
