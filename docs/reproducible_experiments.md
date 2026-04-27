@@ -12,6 +12,8 @@ bidflow analyze cass-sensitivity --quick
 
 本文档把仓库里最常用的复现实验命令集中到一起。所有命令默认在仓库根目录运行。
 
+注意：实验里的 `utility` 是合成数据中的研究变量，用于评价算法；它不是学生端可直接观察的量。把实验结论转成现实建议时，优先看 `m/n = visible_waitlist_count / capacity`，再用必修/核心、强烈想上、一般想上、可替代等粗偏好分层。
+
 ## 1. 环境
 
 ```powershell

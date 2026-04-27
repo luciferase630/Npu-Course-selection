@@ -48,7 +48,9 @@ class MyStrategy(BaseAgent):
         return BidDecision(bids=bids, explanation="minimal example")
 ```
 
-Agent 只能看到 `AgentContext` 中的局部信息：课程容量、可见 waitlist、自己的 utility、培养方案要求、历史 bid 和预算。它看不到其他人的具体 bids，也看不到最终 cutoff。
+Agent 只能看到 `AgentContext` 中的局部信息：课程容量、可见 waitlist、自己的 utility proxy、培养方案要求、历史 bid 和预算。它看不到其他人的具体 bids，也看不到最终 cutoff。
+
+这里的 `utility` 是沙盒里的研究变量，方便算法回测和横向比较。真实学生通常没有精确 utility 表；如果把 BidFlow 结论翻译成学生建议，应优先使用 `m/n = visible_waitlist_count / capacity` 判断竞争边界，再用“必修/核心、强烈想上、一般想上、可替代”的定性偏好分层替代数值 utility。
 
 ## 跑在线实验
 
@@ -106,7 +108,7 @@ bidflow analyze beans --runs ./outputs/baseline ./outputs/my_test
 bidflow analyze focal --run ./outputs/my_test --student-id S001
 ```
 
-主指标是 `course_outcome_utility`。豆子相关字段只用于诊断是否“怨种式多投”，不作为福利成本扣除。
+主指标是 `course_outcome_utility`。豆子相关字段只用于诊断是否“怨种式多投”，不作为福利成本扣除。这个主指标是实验评价口径，不是学生端需要手算的投豆公式。
 
 ## CASS 策略族与敏感度
 
