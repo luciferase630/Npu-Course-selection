@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from src.data_generation.scenarios import load_generation_scenario
@@ -74,7 +75,10 @@ def run(args: argparse.Namespace) -> int:
             value = getattr(args, flag)
             if value is not None:
                 command.extend(["--" + flag.replace("_", "-"), str(value)])
-        return subprocess.run(command, check=False).returncode
+        result = subprocess.run(command, check=False)
+        if result.returncode == 0:
+            _write_market_metadata(Path(args.output), args, scenario_path)
+        return result.returncode
     if args.market_command == "validate":
         market = Market.load(args.market)
         print(json.dumps({"passed": True, **market.summary()}, ensure_ascii=False, indent=2))
@@ -100,3 +104,16 @@ def _resolve_scenario(value: str) -> Path:
     if path.exists():
         return path
     raise SystemExit(f"unknown scenario: {value}")
+
+
+def _write_market_metadata(output: Path, args: argparse.Namespace, scenario_path: Path) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "bidflow_version": "0.1.0",
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "scenario": args.scenario,
+        "scenario_path": str(scenario_path),
+        "seed": args.seed,
+        "output": str(output),
+    }
+    (output / "bidflow_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")

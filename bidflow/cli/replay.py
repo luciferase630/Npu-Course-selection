@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 
 from bidflow.core.replay import run_replay
@@ -44,6 +45,21 @@ def run(args: argparse.Namespace) -> int:
             config_path=args.config,
             formula_prompt=args.formula_prompt,
         )
+        _write_replay_metadata(output, args, agent)
         results.append({"agent": agent, "output": str(output), "course_outcome_delta": metrics.get("delta_course_outcome_utility")})
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
+
+
+def _write_replay_metadata(output: Path, args: argparse.Namespace, agent: str) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "bidflow_version": "0.1.0",
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "baseline": args.baseline,
+        "focal_student_id": args.focal,
+        "agent": agent,
+        "data_dir": args.data_dir,
+        "formula_prompt": bool(args.formula_prompt),
+    }
+    (output / "bidflow_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
