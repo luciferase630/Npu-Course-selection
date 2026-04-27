@@ -18,6 +18,7 @@ from src.data_generation.io import (
     validate_dataset,
     write_csv_rows,
 )
+from src.llm_clients.formula_extractor import empty_formula_metrics, extract_formula_signals, merge_formula_metrics
 from src.llm_clients.openai_client import build_llm_client, extract_decision_explanation
 from src.models import BidState, Course
 from src.student_agents.behavior_tags import count_behavior_tags, derive_behavior_tags
@@ -42,6 +43,51 @@ def load_system_prompt(config: dict) -> str:
 def load_tool_system_prompt(config: dict) -> str:
     prompt_path = Path(config.get("llm_context", {}).get("tool_system_prompt", "prompts/tool_based_system_prompt.md"))
     return prompt_path.read_text(encoding="utf-8")
+
+
+def load_formula_tool_system_prompt(config: dict) -> str:
+    prompt_path = Path(
+        config.get("llm_context", {}).get("formula_tool_system_prompt", "prompts/formula_informed_system_prompt.md")
+    )
+    return prompt_path.read_text(encoding="utf-8")
+
+
+def build_agent_type_by_student(
+    student_ids: list[str],
+    scripted_students: set[str],
+    effective_agent: str,
+    focal_student_id: str | None = None,
+) -> dict[str, str]:
+    if focal_student_id:
+        return {
+            student_id: (
+                "scripted_policy"
+                if student_id in scripted_students
+                else "openai"
+                if student_id == focal_student_id
+                else "behavioral"
+            )
+            for student_id in student_ids
+        }
+    return {
+        student_id: ("scripted_policy" if student_id in scripted_students else effective_agent)
+        for student_id in student_ids
+    }
+
+
+def validate_formula_runtime_args(args, interaction_mode: str, student_ids: list[str]) -> None:
+    if args.focal_student_id and args.focal_student_id not in student_ids:
+        raise SystemExit(f"--focal-student-id {args.focal_student_id} is not present in the dataset")
+    if args.focal_student_id and args.agent != "openai":
+        raise SystemExit("--focal-student-id is only supported with --agent openai")
+    if args.focal_student_id and interaction_mode != "tool_based":
+        raise SystemExit("--focal-student-id is only supported with --interaction-mode tool_based")
+    if args.focal_student_id and args.experiment_group != "E0_llm_natural_baseline":
+        raise SystemExit("--focal-student-id currently requires E0_llm_natural_baseline")
+    if args.formula_prompt and not args.focal_student_id:
+        raise SystemExit("--formula-prompt requires --focal-student-id")
+    if args.formula_prompt and interaction_mode != "tool_based":
+        raise SystemExit("--formula-prompt is only supported with --interaction-mode tool_based")
 
 
 def apply_data_dir_override(config: dict, data_dir: str | None) -> None:
@@ -446,6 +492,73 @@ def compute_final_decision_metrics(final_decisions: dict[tuple[str, str], dict],
     }
 
 
+def formula_course_context(
+    course_ids: list[str],
+    courses: dict[str, Course],
+    waitlist_counts: dict[str, int],
+) -> dict[str, dict[str, int]]:
+    return {
+        course_id: {
+            "m": int(waitlist_counts.get(course_id, 0)),
+            "n": int(courses[course_id].capacity),
+        }
+        for course_id in course_ids
+        if course_id in courses
+    }
+
+
+def compute_focal_metrics(
+    focal_student_id: str | None,
+    utilities: list[dict],
+    budget_rows: list[dict],
+    allocations: list,
+    final_decisions: dict[tuple[str, str], dict],
+    student_ids: list[str],
+    agent_type_by_student: dict[str, str],
+) -> dict:
+    if not focal_student_id:
+        return {}
+    utility_by_student = {row["student_id"]: row for row in utilities}
+    budget_by_student = {row["student_id"]: row for row in budget_rows}
+    focal_utility = utility_by_student.get(focal_student_id, {})
+    focal_budget = budget_by_student.get(focal_student_id, {})
+    selected_bids = [
+        int(decision["bid"])
+        for (student_id, _course_id), decision in final_decisions.items()
+        if student_id == focal_student_id and decision["selected"]
+    ]
+    total_bid = sum(selected_bids)
+    bid_hhi = sum((bid / total_bid) ** 2 for bid in selected_bids) if total_bid else 0.0
+    focal_allocations = [item for item in allocations if item.student_id == focal_student_id]
+    admitted = [item for item in focal_allocations if item.admitted]
+    rejected = [item for item in focal_allocations if not item.admitted]
+    behavioral_values = [
+        float(utility_by_student[student_id]["net_total_utility"])
+        for student_id in student_ids
+        if agent_type_by_student.get(student_id) == "behavioral" and student_id in utility_by_student
+    ]
+    focal_net = float(focal_utility.get("net_total_utility", 0.0) or 0.0)
+    percentile = ""
+    if behavioral_values:
+        percentile = round(sum(1 for value in behavioral_values if value <= focal_net) / len(behavioral_values), 4)
+    admitted_excess_bid_total = sum(
+        max(0, int(item.bid) - int(item.cutoff_bid or 0))
+        for item in admitted
+    )
+    return {
+        "formula_focal_net_total_utility": focal_utility.get("net_total_utility", ""),
+        "formula_focal_gross_liking_utility": focal_utility.get("gross_liking_utility", ""),
+        "formula_focal_utility_per_bean": focal_utility.get("utility_per_bean", ""),
+        "formula_focal_beans_paid": focal_budget.get("beans_paid", ""),
+        "formula_focal_selected_course_count": len(selected_bids),
+        "formula_focal_admission_rate": round(len(admitted) / max(1, len(focal_allocations)), 4),
+        "formula_focal_rejected_wasted_beans": sum(int(item.bid) for item in rejected),
+        "formula_focal_admitted_excess_bid_total": admitted_excess_bid_total,
+        "formula_focal_bid_concentration_hhi": round(bid_hhi, 4),
+        "formula_focal_net_utility_percentile_among_behavioral": percentile,
+    }
+
+
 def main() -> None:
     started_at = time.perf_counter()
     parser = argparse.ArgumentParser(description="Run single-round all-pay MVP experiment.")
@@ -459,6 +572,8 @@ def main() -> None:
     parser.add_argument("--interaction-mode", choices=["single_shot", "tool_based"], default=None)
     parser.add_argument("--time-points", type=int, default=None)
     parser.add_argument("--progress-interval", type=int, default=0)
+    parser.add_argument("--focal-student-id", default=None)
+    parser.add_argument("--formula-prompt", action="store_true")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -478,23 +593,35 @@ def main() -> None:
     interaction_mode = args.interaction_mode or llm_context_config.get("interaction_mode", "single_shot")
     system_prompt = load_system_prompt(config)
     tool_system_prompt = load_tool_system_prompt(config)
+    formula_tool_system_prompt = load_formula_tool_system_prompt(config) if args.formula_prompt else tool_system_prompt
     requested_agent = args.agent
     effective_agent = "behavioral" if requested_agent == "mock" else requested_agent
-    try:
-        llm_client = build_llm_client(requested_agent, base_seed=seed)
-    except RuntimeError as exc:
-        raise SystemExit(f"LLM client setup failed: {exc}") from None
 
     requirements_by_student = group_requirements_by_student(requirements)
     derived_penalties = derive_requirement_penalties(students, edges, requirements, config)
     student_ids = sorted(students)
+    validate_formula_runtime_args(args, interaction_mode, student_ids)
     try:
         scripted_students = select_scripted_students(student_ids, args.experiment_group, seed)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
-    agent_type_by_student = {
-        student_id: ("scripted_policy" if student_id in scripted_students else effective_agent) for student_id in student_ids
-    }
+    agent_type_by_student = build_agent_type_by_student(
+        student_ids,
+        scripted_students,
+        effective_agent,
+        args.focal_student_id,
+    )
+    try:
+        if args.focal_student_id:
+            client_by_agent = {
+                "openai": build_llm_client("openai", base_seed=seed),
+                "behavioral": build_llm_client("behavioral", base_seed=seed),
+            }
+            effective_agent = "focal_openai_background_behavioral"
+        else:
+            client_by_agent = {effective_agent: build_llm_client(requested_agent, base_seed=seed)}
+    except RuntimeError as exc:
+        raise SystemExit(f"LLM client setup failed: {exc}") from None
     available_by_student = {
         student_id: sorted(course_id for (sid, course_id), edge in edges.items() if sid == student_id and edge.eligible)
         for student_id in student_ids
@@ -530,6 +657,8 @@ def main() -> None:
     llm_api_prompt_tokens = 0
     llm_api_completion_tokens = 0
     llm_api_total_tokens = 0
+    formula_metrics = empty_formula_metrics()
+    formula_reconsideration_prompt_count = 0
     behavioral_profile_counts: Counter[str] = Counter()
     processed_decisions = 0
     total_decisions = time_points * len(student_ids)
@@ -575,11 +704,19 @@ def main() -> None:
             )
             raw_output = None
             agent_type = agent_type_by_student[student_id]
+            active_client = client_by_agent.get(agent_type)
+            active_tool_system_prompt = (
+                formula_tool_system_prompt
+                if args.formula_prompt and args.focal_student_id == student_id and agent_type == "openai"
+                else tool_system_prompt
+            )
+            formula_context_for_decision = formula_course_context(available_course_ids, courses, current_counts)
             final_source = agent_type
             events = []
             attempts = []
             retry_feedback = None
             model_decision_explanation = ""
+            final_formula_signals: list[dict] = []
             behavioral_profile_for_trace = {}
             behavioral_decision_context_for_trace = {}
             retry_config = config.get("llm_context", {})
@@ -588,6 +725,8 @@ def main() -> None:
             applied = False
             validation = ValidationResult(False, "no attempt made")
             if interaction_mode == "tool_based" and agent_type != "scripted_policy":
+                if active_client is None:
+                    raise SystemExit(f"No client configured for agent_type={agent_type}")
                 tool_interaction_count += 1
                 session = StudentSession(
                     run_id=args.run_id,
@@ -605,7 +744,7 @@ def main() -> None:
                 )
                 max_tool_rounds = int(retry_config.get("max_tool_rounds", 10))
                 try:
-                    tool_result = llm_client.interact(tool_system_prompt, session, max_tool_rounds)
+                    tool_result = active_client.interact(active_tool_system_prompt, session, max_tool_rounds)
                 except json.JSONDecodeError as exc:
                     tool_result = {
                         "accepted": False,
@@ -646,6 +785,11 @@ def main() -> None:
                 llm_api_prompt_tokens += int(tool_result.get("api_prompt_tokens", 0))
                 llm_api_completion_tokens += int(tool_result.get("api_completion_tokens", 0))
                 llm_api_total_tokens += int(tool_result.get("api_total_tokens", 0))
+                formula_metrics = merge_formula_metrics(
+                    formula_metrics,
+                    tool_result.get("formula_metrics", empty_formula_metrics()),
+                )
+                formula_reconsideration_prompt_count += int(tool_result.get("formula_reconsideration_prompt_count", 0))
                 tool_submit_rejected_count += int(tool_result.get("submit_rejected_count", 0))
                 behavioral_profile = tool_result.get("behavioral_profile", {})
                 if isinstance(behavioral_profile, dict) and behavioral_profile.get("persona"):
@@ -659,6 +803,12 @@ def main() -> None:
                 raw_output = tool_result.get("final_tool_request")
                 attempts = tool_result.get("tool_trace", [])
                 model_decision_explanation = str(tool_result.get("final_decision_explanation", "") or "")
+                final_formula_signals = extract_formula_signals(
+                    raw_output,
+                    course_context=formula_context_for_decision,
+                    budget_initial=student.budget_initial,
+                    remaining_budget=budget_available,
+                )
                 if tool_result.get("accepted"):
                     applied, apply_error, events = apply_decision(
                         student_id,
@@ -687,7 +837,9 @@ def main() -> None:
                         if agent_type == "scripted_policy":
                             raw_output = run_scripted_policy(args.script_policy, private_context, snapshot)
                         else:
-                            raw_output = llm_client.complete(system_prompt, payload)
+                            if active_client is None:
+                                raise SystemExit(f"No client configured for agent_type={agent_type}")
+                            raw_output = active_client.complete(system_prompt, payload)
                         validation, normalized = validate_decision_output(
                             raw_output,
                             student_id,
@@ -763,6 +915,14 @@ def main() -> None:
 
             for attempt in attempts:
                 parsed_attempt_output = attempt.get("tool_request", attempt.get("raw_model_output"))
+                attempt_formula_signals = attempt.get("formula_signals")
+                if attempt_formula_signals is None:
+                    attempt_formula_signals = extract_formula_signals(
+                        parsed_attempt_output,
+                        course_context=formula_context_for_decision,
+                        budget_initial=student.budget_initial,
+                        remaining_budget=budget_available,
+                    )
                 model_outputs.append(
                     {
                         "run_id": args.run_id,
@@ -783,6 +943,10 @@ def main() -> None:
                             "decision_explanation",
                             extract_decision_explanation(parsed_attempt_output),
                         ),
+                        "formula_signals": attempt_formula_signals,
+                        "formula_reconsideration_prompt": bool(attempt.get("formula_reconsideration_prompt", False)),
+                        "response_metadata": attempt.get("response_metadata", {}),
+                        "api_usage": attempt.get("api_usage", {}),
                         "tool_result_status": (
                             attempt.get("tool_result", {}).get("status")
                             if isinstance(attempt.get("tool_result"), dict)
@@ -815,6 +979,7 @@ def main() -> None:
                     "explanation_missing": not bool(model_decision_explanation),
                     "explanation_char_count": len(model_decision_explanation),
                     "model_decision_explanation": model_decision_explanation,
+                    "formula_signals": final_formula_signals,
                     "final_model_output": raw_output,
                     "final_output_summary": summarize_attempt(raw_output),
                 }
@@ -871,12 +1036,16 @@ def main() -> None:
                     "agent_type": agent_type,
                     "script_policy_name": args.script_policy if agent_type == "scripted_policy" else "",
                     "interaction_mode": interaction_mode,
-                    "system_prompt": tool_system_prompt if interaction_mode == "tool_based" and agent_type != "scripted_policy" else system_prompt,
+                    "system_prompt": active_tool_system_prompt if interaction_mode == "tool_based" and agent_type != "scripted_policy" else system_prompt,
                     "student_private_context": private_context,
                     "state_snapshot": snapshot,
                     "raw_model_output": raw_output,
                     "parsed_output": raw_output if applied else None,
                     "model_decision_explanation": model_decision_explanation,
+                    "formula_signals": final_formula_signals,
+                    "formula_reconsideration_prompt_count": sum(
+                        1 for attempt in attempts if attempt.get("formula_reconsideration_prompt")
+                    ),
                     "behavioral_profile": behavioral_profile_for_trace,
                     "behavioral_decision_context": behavioral_decision_context_for_trace,
                     "validation_result": {"valid": applied, "error": "" if applied else validation.error},
@@ -1032,12 +1201,34 @@ def main() -> None:
             4,
         )
     final_decision_metrics = compute_final_decision_metrics(final_decisions, student_ids)
+    formula_alpha_count = int(formula_metrics.get("formula_alpha_count", 0) or 0)
+    formula_metric_output = {
+        **formula_metrics,
+        "formula_alpha_mean": (
+            round(float(formula_metrics.get("formula_alpha_sum", 0.0)) / formula_alpha_count, 8)
+            if formula_alpha_count
+            else None
+        ),
+        "formula_reconsideration_prompt_count": formula_reconsideration_prompt_count,
+    }
+    formula_metric_output.pop("formula_alpha_sum", None)
+    focal_metrics = compute_focal_metrics(
+        args.focal_student_id,
+        utilities,
+        budget_rows,
+        allocations,
+        final_decisions,
+        student_ids,
+        agent_type_by_student,
+    )
     metrics = {
         "run_id": args.run_id,
         "experiment_group": args.experiment_group,
         "agent_requested": requested_agent,
         "agent_effective": effective_agent,
         "interaction_mode": interaction_mode,
+        "formula_prompt_enabled": args.formula_prompt,
+        "formula_focal_student_id": args.focal_student_id or "",
         "n_students": len(students),
         "n_courses": len(courses),
         "time_points": time_points,
@@ -1085,6 +1276,8 @@ def main() -> None:
         "llm_api_prompt_tokens": llm_api_prompt_tokens,
         "llm_api_completion_tokens": llm_api_completion_tokens,
         "llm_api_total_tokens": llm_api_total_tokens,
+        **formula_metric_output,
+        **focal_metrics,
         "behavior_tag_counts": count_behavior_tags(bid_events),
         "behavioral_profile_counts": dict(sorted(behavioral_profile_counts.items())),
         "elapsed_seconds": round(time.perf_counter() - started_at, 4),

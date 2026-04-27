@@ -169,4 +169,24 @@ $$
 }
 ```
 
+## 8. Formula strategy fields
+
+Formula-informed focal LLM runs add audit-only formula fields. These fields do
+not change allocation and are not bid recommendations.
+
+- `llm_model_outputs.jsonl`: each model round may include `formula_signals`,
+  `formula_reconsideration_prompt`, `response_metadata`, and `api_usage`.
+- `llm_traces.jsonl`: each student-decision trace includes final
+  `formula_signals` and the count of formula reconsideration prompts.
+- `llm_decision_explanations.jsonl`: each student decision includes final
+  `formula_signals`.
+- `metrics.json`: formula runs add aggregate signal counts, alpha summary,
+  excessive-signal counts, reconsideration prompt count, action counts, and
+  focal-student outcome/cost metrics.
+
+`formula_signal_integer_reference` is a clipped audit reference only. If the
+continuous formula value exceeds budget or is non-finite, the platform records
+that fact and may ask the LLM to reconsider, but it does not rewrite bids or
+choose courses.
+
 MVP 指标先保持简单，重点确保实验记录完整、可复盘。

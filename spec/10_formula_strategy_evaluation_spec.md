@@ -1,6 +1,6 @@
 # Formula Strategy Evaluation Spec
 
-This spec defines a future experiment for evaluating the image formula as an LLM strategy aid. It does not implement runtime code, prompt injection, alpha parsing, or analysis scripts.
+This spec defines an experiment for evaluating the image formula as an LLM strategy aid. Phase 1 implements prompt injection, alpha/formula-signal extraction, focal-student runner support, and audit metrics. It still does not run LLM experiments, implement a formula agent, or implement market-wide formula propagation.
 
 ## 1. Research Question
 
@@ -31,6 +31,8 @@ Definitions:
 When `m <= n`, the formula has no real-valued crowding term. The prompt should frame this as no obvious congestion signal; it must not produce a high bid suggestion solely from the formula.
 
 The formula is a crowding / cutoff signal, not a personal optimal-bid theorem. It lacks the student's utility, budget, alternatives, schedule constraints, and integer bidding constraints.
+
+When the continuous formula value exceeds the student's remaining budget, exceeds the total budget, or becomes non-finite, the platform records it as an excessive signal. The platform must not turn that value into an all-in bid suggestion. In Phase 1, a mechanical near-all-in `submit_bids` that cites an excessive formula signal without explaining opportunity cost or substitutes triggers one protocol warning and asks the LLM to reconsider.
 
 ## 3. Matched A/B Design
 
@@ -121,11 +123,9 @@ Do not interpret a market-wide average change as the main result. The main resul
 
 This spec does not:
 
-- implement formula prompt injection;
-- implement alpha extraction or validation;
 - implement a formula agent;
 - run LLM experiments;
 - test 20% or 30% market-wide formula propagation;
 - claim the formula is a rational optimal bidding strategy.
 
-Those steps require a separate implementation plan after this spec is reviewed.
+Formula prompt injection and alpha/formula-signal extraction are Phase 1 runtime features. The remaining steps require separate implementation plans.
