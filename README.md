@@ -1,5 +1,8 @@
 # 西工大的选课公式，是个骗局
 
+> BidFlow sandbox is now available as a local CLI: `pip install -e .`, then run `bidflow --help`.
+> See `docs/sandbox_guide.md` for the install -> generate market -> run session -> replay -> analyze workflow.
+
 这句话不是说某个具体学校或某个具体同学在骗人。它说的是一种很常见的幻觉：只要拿到一个“投豆公式”，学生就能在选课市场里稳定变强。
 
 我们做了一个可复现的仿真实验，结论更直接：

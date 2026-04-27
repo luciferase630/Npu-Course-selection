@@ -1,0 +1,90 @@
+# BidFlow 沙盒平台快速指南
+
+BidFlow 是这个项目的新 CLI 层。它把现有选课 all-pay 仿真、CASS、behavioral baseline、LLM focal、固定背景 replay 包成一个外部用户能直接使用的沙盒。
+
+## 安装
+
+```powershell
+python -m pip install -e .
+bidflow --help
+```
+
+## 生成市场
+
+```powershell
+bidflow market scenarios
+bidflow market generate --scenario medium --output ./my_market
+bidflow market validate ./my_market
+bidflow market info ./my_market
+```
+
+内置场景包括：
+
+- `medium`
+- `behavioral_large`
+- `research_large_high`
+- `research_large_medium`
+- `research_large_sparse_hotspots`
+
+## 初始化自己的策略
+
+```powershell
+bidflow agent init my_strategy
+bidflow agent register ./my_strategy
+bidflow agent list
+```
+
+策略文件只需要实现：
+
+```python
+from bidflow.agents import AgentContext, BaseAgent, BidDecision, register
+
+@register("my_strategy")
+class MyStrategy(BaseAgent):
+    def decide(self, context: AgentContext) -> BidDecision:
+        bids = {}
+        for course in sorted(context.courses, key=lambda item: item.utility, reverse=True)[:5]:
+            bids[course.course_id] = 1
+        return BidDecision(bids=bids, explanation="minimal example")
+```
+
+Agent 只能看到 `AgentContext` 中的局部信息：课程容量、可见 waitlist、自己的 utility、培养方案要求、历史 bid 和预算。它看不到其他人的具体 bids，也看不到最终 cutoff。
+
+## 跑在线实验
+
+```powershell
+bidflow session run `
+  --market ./my_market `
+  --population "focal:S001=cass,background=behavioral" `
+  --output ./outputs/my_test `
+  --time-points 3
+```
+
+当前 CLI 先委托旧 runner，所以旧 CSV schema 和旧输出结构仍然保留。新输出目录会额外包含：
+
+- `bidflow_metadata.json`
+- `population.yaml`
+- `experiment.yaml`
+
+## 固定背景回测
+
+```powershell
+bidflow replay run `
+  --baseline ./outputs/baseline `
+  --focal S001 `
+  --agent cass `
+  --data-dir ./my_market `
+  --output ./outputs/replay_s001_cass
+```
+
+这对应“给定其他人怎么投，只替换 focal student 策略”的单智能体最优响应评测。
+
+## 分析
+
+```powershell
+bidflow analyze summary --runs ./outputs/baseline ./outputs/my_test
+bidflow analyze beans --runs ./outputs/baseline ./outputs/my_test
+bidflow analyze focal --run ./outputs/my_test --student-id S001
+```
+
+主指标是 `course_outcome_utility`。豆子相关字段只用于诊断是否“怨种式多投”，不作为福利成本扣除。

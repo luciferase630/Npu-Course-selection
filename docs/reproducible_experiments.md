@@ -1,5 +1,14 @@
 # 可复现实验入口
 
+新入口优先使用 BidFlow CLI。旧 `python -m src.*` 命令仍然保留，方便复现实验历史结果。
+
+```powershell
+python -m pip install -e .
+bidflow market generate --scenario research_large_high --output data/synthetic/research_large
+bidflow session run --market data/synthetic/research_large --population "background=behavioral" --run-id research_large_800x240x3_behavioral --time-points 3
+bidflow replay run --baseline outputs/runs/research_large_800x240x3_behavioral --focal S048 --agent cass --data-dir data/synthetic/research_large --output outputs/runs/research_large_s048_cass_backtest
+```
+
 本文档把仓库里最常用的复现实验命令集中到一起。所有命令默认在仓库根目录运行。
 
 ## 1. 环境
