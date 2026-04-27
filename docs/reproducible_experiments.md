@@ -7,6 +7,7 @@ python -m pip install -e .
 bidflow market generate --scenario research_large_high --output data/synthetic/research_large
 bidflow session run --market data/synthetic/research_large --population "background=behavioral" --run-id research_large_800x240x3_behavioral --time-points 3
 bidflow replay run --baseline outputs/runs/research_large_800x240x3_behavioral --focal S048 --agent cass --data-dir data/synthetic/research_large --output outputs/runs/research_large_s048_cass_backtest
+bidflow analyze cass-sensitivity --quick
 ```
 
 本文档把仓库里最常用的复现实验命令集中到一起。所有命令默认在仓库根目录运行。
@@ -154,7 +155,33 @@ python -m src.analysis.llm_focal_backtest `
   --output outputs/runs/research_large_s048_llm_formula_replay
 ```
 
-## 6. 常用脚本
+## 6. CASS 策略族与敏感度
+
+完整策略族 sweep 和 one-at-a-time 敏感度分析：
+
+```powershell
+bidflow analyze cass-sensitivity
+```
+
+快速 smoke：
+
+```powershell
+bidflow analyze cass-sensitivity --quick
+```
+
+底层兼容入口：
+
+```powershell
+python -m src.analysis.cass_policy_sensitivity
+```
+
+默认会输出：
+
+- `outputs/tables/cass_sensitivity_detail.csv`
+- `outputs/tables/cass_sensitivity_policy_summary.csv`
+- `outputs/tables/cass_sensitivity_oat_summary.csv`
+
+## 7. 常用脚本
 
 这些命令已经封装在 `scripts/`：
 

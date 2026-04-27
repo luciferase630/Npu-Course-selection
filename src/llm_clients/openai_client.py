@@ -376,7 +376,12 @@ class OpenAICompatibleClient:
         }
 
 
-def build_llm_client(agent: str, base_seed: int = 20260425, cass_policy: str | None = None):
+def build_llm_client(
+    agent: str,
+    base_seed: int = 20260425,
+    cass_policy: str | None = None,
+    cass_params: dict[str, float | int] | None = None,
+):
     if agent in {"behavioral", "mock"}:
         from src.llm_clients.behavioral_client import BehavioralAgentClient
 
@@ -388,7 +393,7 @@ def build_llm_client(agent: str, base_seed: int = 20260425, cass_policy: str | N
     if agent == "cass":
         from src.llm_clients.cass_client import CASSAgentClient
 
-        return CASSAgentClient(base_seed=base_seed, policy=cass_policy or "cass_v2")
+        return CASSAgentClient(base_seed=base_seed, policy=cass_policy or "cass_v2", cass_params=cass_params)
     if agent == "openai":
         return OpenAICompatibleClient()
     raise ValueError(f"Unsupported agent: {agent}")

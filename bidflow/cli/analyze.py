@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.analysis.cass_policy_sensitivity import run_policy_sensitivity
+
 
 def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("analyze", help="Analyze run outputs.")
@@ -16,6 +18,13 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     focal = analyze_subparsers.add_parser("focal", help="Show focal metrics.")
     focal.add_argument("--run", required=True)
     focal.add_argument("--student-id", required=True)
+    sensitivity = analyze_subparsers.add_parser("cass-sensitivity", help="Run CASS policy and OAT sensitivity analysis.")
+    sensitivity.add_argument("--output-dir", default="outputs/runs/cass_sensitivity")
+    sensitivity.add_argument("--detail-table", default="outputs/tables/cass_sensitivity_detail.csv")
+    sensitivity.add_argument("--policy-summary-table", default="outputs/tables/cass_sensitivity_policy_summary.csv")
+    sensitivity.add_argument("--oat-summary-table", default="outputs/tables/cass_sensitivity_oat_summary.csv")
+    sensitivity.add_argument("--config", default="configs/simple_model.yaml")
+    sensitivity.add_argument("--quick", action="store_true", help="Run one background and one focal for smoke testing.")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -34,6 +43,17 @@ def run(args: argparse.Namespace) -> int:
                 print(json.dumps(row, ensure_ascii=False, indent=2))
                 return 0
         raise SystemExit(f"student {args.student_id} not found in {args.run}/utilities.csv")
+    if args.analyze_command == "cass-sensitivity":
+        result = run_policy_sensitivity(
+            output_dir=args.output_dir,
+            detail_table=args.detail_table,
+            policy_summary_table=args.policy_summary_table,
+            oat_summary_table=args.oat_summary_table,
+            config_path=args.config,
+            quick=args.quick,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     raise SystemExit(f"unknown analyze command: {args.analyze_command}")
 
 

@@ -8,7 +8,42 @@ from src.student_agents.context import split_time_slots
 
 
 DEFAULT_CASS_POLICY = "cass_v2"
-CASS_POLICIES = {"cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_v2"}
+CASS_POLICIES = {
+    "cass_v1",
+    "cass_smooth",
+    "cass_value",
+    "cass_balanced",
+    "cass_frontier",
+    "cass_logit",
+    "cass_v2",
+}
+DEFAULT_CASS_PARAMS = {
+    "pressure_denominator": 1.2,
+    "logit_center": 1.0,
+    "logit_slope": 3.0,
+    "value_center": 45.0,
+    "value_span": 55.0,
+    "value_scale_min": 0.35,
+    "value_scale_max": 1.25,
+    "max_single_bid_share": 0.20,
+    "required_bid_scale": 0.75,
+    "strong_elective_bid_scale": 0.35,
+    "optional_bid_scale": 0.12,
+    "required_deadline_urgency": 0.18,
+    "required_selection_base": 145.0,
+    "required_penalty_weight": 0.22,
+    "strong_elective_selection_base": 42.0,
+    "strong_elective_penalty_weight": 0.08,
+    "optional_selection_base": 12.0,
+    "optional_penalty_weight": 0.03,
+    "price_penalty_value": 3.0,
+    "optional_hot_penalty_value": 10.0,
+    "price_penalty_balanced": 1.8,
+    "optional_hot_penalty_balanced": 6.0,
+    "price_penalty_logit": 1.8,
+    "optional_hot_penalty_logit": 6.0,
+    "frontier_price_exponent": 0.32,
+}
 
 
 @dataclass(frozen=True)
@@ -84,6 +119,35 @@ def resolve_cass_policy(policy: str | None) -> str:
     return value
 
 
+def normalize_cass_params(params: dict[str, float | int] | None = None) -> dict[str, float]:
+    result = {key: float(value) for key, value in DEFAULT_CASS_PARAMS.items()}
+    for key, value in (params or {}).items():
+        if key not in DEFAULT_CASS_PARAMS and key != "max_courses":
+            raise ValueError(f"Unsupported CASS parameter: {key}")
+        result[key] = float(value)
+    if result["pressure_denominator"] <= 0:
+        raise ValueError("pressure_denominator must be positive")
+    if result["value_span"] <= 0:
+        raise ValueError("value_span must be positive")
+    if not 0 < result["max_single_bid_share"] <= 1:
+        raise ValueError("max_single_bid_share must be in (0, 1]")
+    if result["logit_slope"] <= 0:
+        raise ValueError("logit_slope must be positive")
+    return result
+
+
+def pressure_signal(ratio: float, params: dict[str, float], family: str = "rational") -> float:
+    if ratio <= 0:
+        return 0.0
+    if family == "logit":
+        center = params["logit_center"]
+        slope = params["logit_slope"]
+        raw = 1.0 / (1.0 + math.exp(-slope * (ratio - center)))
+        floor = 1.0 / (1.0 + math.exp(slope * center))
+        return _clamp((raw - floor) / max(1e-9, 1.0 - floor), 0.0, 1.0)
+    return (ratio * ratio) / (ratio * ratio + params["pressure_denominator"])
+
+
 def compute_smooth_cass_bid(
     *,
     ratio: float,
@@ -93,6 +157,8 @@ def compute_smooth_cass_bid(
     time_point: int,
     time_points_total: int,
     budget: int,
+    cass_params: dict[str, float | int] | None = None,
+    pressure_family: str = "rational",
 ) -> int:
     """Continuous CASS bid curve.
 
@@ -104,16 +170,21 @@ def compute_smooth_cass_bid(
     """
     if time_point <= 1:
         return 5 if is_required else 1
-    max_single = max(3, budget // 5)
-    pressure = (ratio * ratio) / (ratio * ratio + 1.2) if ratio > 0 else 0.0
-    value_scale = _clamp((utility - 45.0) / 55.0, 0.35, 1.25)
+    params = normalize_cass_params(cass_params)
+    max_single = max(3, int(round(budget * params["max_single_bid_share"])))
+    pressure = pressure_signal(ratio, params, pressure_family)
+    value_scale = _clamp(
+        (utility - params["value_center"]) / params["value_span"],
+        params["value_scale_min"],
+        params["value_scale_max"],
+    )
     requirement_scale = {
-        "required": 0.75,
-        "strong_elective_requirement": 0.35,
-        "optional_target": 0.12,
+        "required": params["required_bid_scale"],
+        "strong_elective_requirement": params["strong_elective_bid_scale"],
+        "optional_target": params["optional_bid_scale"],
     }.get(requirement_type, 0.0)
     deadline = time_point / max(1, time_points_total)
-    urgency = 1.0 + (0.18 * deadline if is_required else 0.0)
+    urgency = 1.0 + (params["required_deadline_urgency"] * deadline if is_required else 0.0)
     floor = 2 if is_required else 1
     bid = floor + int(round(max_single * pressure * value_scale * (1.0 + requirement_scale) * urgency))
     return max(1, min(max_single, bid))
@@ -133,8 +204,11 @@ def cass_select_and_bid(
     time_points_total: int,
     max_courses: int = 12,
     policy: str = DEFAULT_CASS_POLICY,
+    cass_params: dict[str, float | int] | None = None,
 ) -> CassDecision:
     policy = resolve_cass_policy(policy)
+    params = normalize_cass_params(cass_params)
+    max_courses = int(params.get("max_courses", max_courses))
     requirement_by_code = {requirement.course_code: requirement for requirement in requirements}
     options = [
         CassCourseOption(
@@ -158,7 +232,7 @@ def cass_select_and_bid(
     ]
 
     def priority(option: CassCourseOption) -> float:
-        if policy in {"cass_value", "cass_balanced", "cass_frontier", "cass_v2"}:
+        if policy in {"cass_value", "cass_balanced", "cass_frontier", "cass_logit", "cass_v2"}:
             return _continuous_priority(
                 option,
                 student,
@@ -167,8 +241,9 @@ def cass_select_and_bid(
                 time_point,
                 time_points_total,
                 policy,
+                params,
             )
-        return _tier_priority(option, student, requirement_by_code, derived_penalties)
+        return _tier_priority(option, student, requirement_by_code, derived_penalties, params)
 
     ordered = sorted(options, key=priority, reverse=True)
     selected = _select_feasible_options(ordered, student.credit_cap, max_courses)
@@ -197,9 +272,11 @@ def cass_select_and_bid(
                 time_point=time_point,
                 time_points_total=time_points_total,
                 budget=student.budget_initial,
+                cass_params=params,
+                pressure_family="logit" if policy == "cass_logit" else "rational",
             )
 
-    max_single = max(3, student.budget_initial // 5)
+    max_single = max(3, int(round(student.budget_initial * params["max_single_bid_share"])))
     for course_id, bid in list(bids.items()):
         bids[course_id] = min(bid, max_single)
 
@@ -212,7 +289,14 @@ def cass_select_and_bid(
             student.budget_initial,
             max_single,
         )
-    diagnostics = cass_diagnostics(bids, selected, requirement_by_code, student.budget_initial, policy=policy)
+    diagnostics = cass_diagnostics(
+        bids,
+        selected,
+        requirement_by_code,
+        student.budget_initial,
+        policy=policy,
+        cass_params=params,
+    )
     return CassDecision(bids=bids, diagnostics=diagnostics, selected_options=selected, policy=policy)
 
 
@@ -221,13 +305,14 @@ def _tier_priority(
     student: Student,
     requirement_by_code: dict[str, CourseRequirement],
     derived_penalties: dict[tuple[str, str], float],
+    params: dict[str, float],
 ) -> float:
     requirement = requirement_by_code.get(option.course_code)
     penalty = float(derived_penalties.get((student.student_id, option.course_code), 0.0))
     ratio = option.waitlist_count / max(1, option.capacity)
     return (
         option.utility
-        + _requirement_boost(requirement, penalty, required_scale=180.0)
+        + _requirement_boost(requirement, penalty, params, required_scale=180.0)
         + (3.0 - option.credit) * 2.0
         - ratio * (12.0 if requirement and requirement.requirement_type == "required" else 24.0)
         + (8.0 if option.previous_selected else 0.0)
@@ -242,6 +327,7 @@ def _continuous_priority(
     time_point: int,
     time_points_total: int,
     policy: str,
+    params: dict[str, float],
 ) -> float:
     requirement = requirement_by_code.get(option.course_code)
     requirement_type = requirement.requirement_type if requirement else ""
@@ -249,7 +335,7 @@ def _continuous_priority(
     ratio = option.waitlist_count / max(1, option.capacity)
     value = (
         option.utility
-        + _requirement_boost(requirement, penalty, required_scale=145.0)
+        + _requirement_boost(requirement, penalty, params, required_scale=params["required_selection_base"])
         + (3.0 - option.credit) * 2.0
         + (8.0 if option.previous_selected else 0.0)
     )
@@ -261,35 +347,41 @@ def _continuous_priority(
         time_point=time_point,
         time_points_total=time_points_total,
         budget=student.budget_initial,
+        cass_params=params,
+        pressure_family="logit" if policy == "cass_logit" else "rational",
     )
     if policy == "cass_value":
-        optional_hot_penalty = 0.0 if requirement_type == "required" else ratio * 10.0
-        return value - estimated_bid * 3.0 - optional_hot_penalty
+        optional_hot_penalty = 0.0 if requirement_type == "required" else ratio * params["optional_hot_penalty_value"]
+        return value - estimated_bid * params["price_penalty_value"] - optional_hot_penalty
     if policy in {"cass_balanced", "cass_v2"}:
-        optional_hot_penalty = 0.0 if requirement_type == "required" else ratio * 6.0
-        return value - estimated_bid * 1.8 - optional_hot_penalty
+        optional_hot_penalty = 0.0 if requirement_type == "required" else ratio * params["optional_hot_penalty_balanced"]
+        return value - estimated_bid * params["price_penalty_balanced"] - optional_hot_penalty
+    if policy == "cass_logit":
+        optional_hot_penalty = 0.0 if requirement_type == "required" else ratio * params["optional_hot_penalty_logit"]
+        return value - estimated_bid * params["price_penalty_logit"] - optional_hot_penalty
     # cass_frontier ranks courses by payoff per expected bean/credit pressure.
     # It is intentionally compact: one value estimate, one smooth price, and a
     # light credit normalizer to prefer broader feasible schedules.
     credit_pressure = math.sqrt(max(0.5, option.credit))
-    price_pressure = (1.0 + estimated_bid) ** 0.32
+    price_pressure = (1.0 + estimated_bid) ** params["frontier_price_exponent"]
     return value / (credit_pressure * price_pressure)
 
 
 def _requirement_boost(
     requirement: CourseRequirement | None,
     penalty: float,
+    params: dict[str, float],
     *,
     required_scale: float,
 ) -> float:
     if requirement is None:
         return 0.0
     if requirement.requirement_type == "required":
-        return required_scale + penalty * 0.22
+        return required_scale + penalty * params["required_penalty_weight"]
     if requirement.requirement_type == "strong_elective_requirement":
-        return 42.0 + penalty * 0.08
+        return params["strong_elective_selection_base"] + penalty * params["strong_elective_penalty_weight"]
     if requirement.requirement_type == "optional_target":
-        return 12.0 + penalty * 0.03
+        return params["optional_selection_base"] + penalty * params["optional_penalty_weight"]
     return 0.0
 
 
@@ -400,6 +492,7 @@ def cass_diagnostics(
     budget: int,
     *,
     policy: str = DEFAULT_CASS_POLICY,
+    cass_params: dict[str, float] | None = None,
 ) -> dict[str, object]:
     tier_counts = {"free": 0, "light": 0, "filling": 0, "crowded": 0, "hot": 0}
     required_count = 0
@@ -421,4 +514,5 @@ def cass_diagnostics(
         "cass_max_bid": max_bid,
         "cass_max_bid_share": round(max_bid / total_bid, 8) if total_bid else 0.0,
         "cass_tier_counts": tier_counts,
+        "cass_params": dict(sorted((cass_params or normalize_cass_params()).items())),
     }

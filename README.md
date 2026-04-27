@@ -35,6 +35,40 @@ S048 online 验证也很直接：
 
 所以当前结论是：公式是一个有用的信号，不是最终策略。CASS-v2 是默认强 baseline；`cass_value` 是更省豆、更“不当怨种”的单点强策略。完整记录见 `reports/interim/report_2026-04-28_cass_v2_policy_sweep.md`。
 
+## 2026-04-28 补充：按数学建模方式做了策略族和敏感度分析
+
+为了避免 CASS 变成另一个“拍脑袋公式”，现在的评测不再只比较一个分段函数，而是比较 `6` 个策略族：
+
+| Policy | 思路 |
+| --- | --- |
+| `cass_v1` | 原始分段规则，作为历史基线 |
+| `cass_smooth` | 保留 v1 选课逻辑，把出价换成连续压力曲线 |
+| `cass_value` | 强 price penalty，优先避免无效多投 |
+| `cass_v2` | balanced value-cost 默认策略 |
+| `cass_frontier` | 极端 value/bean frontier，检验“只省豆”的边界 |
+| `cass_logit` | S 型拥挤压力曲线，检验函数形式敏感性 |
+
+完整实验覆盖 `4` 个背景市场 × `4` 个 focal students × `6` 个策略族，并额外对 `cass_v2` 做 one-at-a-time 超参数扰动。结果：
+
+| Policy | Avg utility | Avg delta vs BA | Beans | Rejected waste | Non-marginal | Robust score |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| **`cass_v2`** | **2262.39** | **811.27** | 51.13 | 2.50 | 42.19 | **736.46** |
+| `cass_smooth` | 2256.27 | 805.16 | 59.69 | 5.00 | 44.13 | 727.35 |
+| `cass_logit` | 2226.95 | 775.84 | 48.31 | 2.50 | 41.81 | 701.24 |
+| `cass_value` | 2217.63 | 766.51 | **37.81** | **0.00** | **33.13** | 697.85 |
+| `cass_v1` | 2182.95 | 731.83 | 61.50 | 8.31 | 50.50 | 633.68 |
+| `cass_frontier` | 2040.13 | 589.01 | 30.94 | 2.50 | 26.56 | 478.30 |
+
+敏感度分析的结论也很关键：`cass_v2` 基准、提高单课上限、提高 price penalty、提高 optional-hot penalty 的结果都在同一量级，没有出现“换一个合理参数结论就崩”的情况。真正危险的是两个方向：单课上限过低会明显伤害 utility；price penalty 过低会让策略重新变得浪费豆子。
+
+复现实验入口已经挂到 BidFlow：
+
+```powershell
+bidflow analyze cass-sensitivity
+```
+
+所以现在更准确的表述是：**我不支持把流行投豆公式当成答案；它确实提供了拥挤信号，但 CASS 用更系统的 value-cost 选择和敏感度检验，做出了比公式更可复现、更稳健的基线。** 详细报告见 `reports/interim/report_2026-04-28_cass_sensitivity_analysis.md`。
+
 这句话不是说某个具体学校或某个具体同学在骗人。它说的是一种很常见的幻觉：只要拿到一个“投豆公式”，学生就能在选课市场里稳定变强。
 
 我们做了一个可复现的仿真实验，结论更直接：
@@ -316,6 +350,8 @@ python -m src.experiments.run_single_round_mvp `
 - `reports/interim/research_large_s048_mix30_formula_market_report.md`
 - `reports/interim/report_2026-04-27_cass_algorithm_backtest.md`
 - `reports/interim/report_2026-04-27_cass_vs_llm_formula_head_to_head.md`
+- `reports/interim/report_2026-04-28_cass_v2_policy_sweep.md`
+- `reports/interim/report_2026-04-28_cass_sensitivity_analysis.md`
 - `reports/reviews/review_2026-04-27_cass_mechanism_and_project_cleanup.md`
 
 ## 当前边界

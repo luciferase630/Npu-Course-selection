@@ -15,9 +15,15 @@ class CASSAgentClient:
     courses with bounded bids.
     """
 
-    def __init__(self, base_seed: int = 20260425, policy: str = DEFAULT_CASS_POLICY) -> None:
+    def __init__(
+        self,
+        base_seed: int = 20260425,
+        policy: str = DEFAULT_CASS_POLICY,
+        cass_params: dict[str, float | int] | None = None,
+    ) -> None:
         self.base_seed = base_seed
         self.policy = resolve_cass_policy(policy)
+        self.cass_params = cass_params or {}
 
     def complete(self, system_prompt: str, interaction_payload: dict) -> dict:
         private = interaction_payload["student_private_context"]
@@ -61,6 +67,7 @@ class CASSAgentClient:
             time_point=int(state["time_point"]),
             time_points_total=int(state.get("time_points_total", state["time_point"])),
             policy=self.policy,
+            cass_params=self.cass_params,
         )
         return self._output_from_decision(
             student.student_id,
@@ -84,6 +91,7 @@ class CASSAgentClient:
             time_point=session.time_point,
             time_points_total=session.time_points_total,
             policy=self.policy,
+            cass_params=self.cass_params,
         )
         bids = [{"course_id": course_id, "bid": bid} for course_id, bid in sorted(decision.bids.items())]
         check = session.call_tool("check_schedule", {"bids": bids})

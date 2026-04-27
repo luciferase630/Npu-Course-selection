@@ -17,6 +17,7 @@ class CASSAgent(BaseAgent):
         client = CASSAgentClient(
             base_seed=int(self.config.get("base_seed", 20260425)),
             policy=str(self.config.get("policy", "cass_v2")),
+            cass_params=self.config.get("cass_params") if isinstance(self.config.get("cass_params"), dict) else None,
         )
         decision = decision_from_client_output(client.complete("", payload_for_context(context)))
         decision.validate(context)

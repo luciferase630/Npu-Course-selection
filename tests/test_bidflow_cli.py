@@ -11,6 +11,7 @@ from bidflow.agents import AgentContext, BaseAgent, BidDecision, build_agent, li
 from bidflow.agents.context import CourseInfo
 from bidflow.agents.registry import load_external_agent
 from bidflow.core.population import Population
+from src.analysis.cass_policy_sensitivity import POLICY_SWEEP, oat_sensitivity_cases
 
 
 class BidFlowCliTests(unittest.TestCase):
@@ -77,6 +78,14 @@ class UnitExternalAgent(BaseAgent):
         list_result = self.run_cli("agent", "list")
         self.assertEqual(list_result.returncode, 0, list_result.stderr)
         self.assertIn("cass", list_result.stdout)
+        sensitivity_help = self.run_cli("analyze", "cass-sensitivity", "--help")
+        self.assertEqual(sensitivity_help.returncode, 0, sensitivity_help.stderr)
+        self.assertIn("--quick", sensitivity_help.stdout)
+
+    def test_sensitivity_grid_has_distinct_policy_families(self) -> None:
+        self.assertGreaterEqual(len(POLICY_SWEEP), 6)
+        self.assertIn("cass_logit", POLICY_SWEEP)
+        self.assertGreaterEqual(len(oat_sensitivity_cases()), 10)
 
     def test_market_generate_validate_session_and_replay_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -118,7 +127,7 @@ class UnitExternalAgent(BaseAgent):
                 "--agent",
                 "cass",
                 "--policy",
-                "cass_frontier",
+                "cass_logit",
                 "--data-dir",
                 str(market_dir),
                 "--output",
@@ -128,4 +137,4 @@ class UnitExternalAgent(BaseAgent):
             self.assertTrue((replay_dir / "cass_focal_backtest_metrics.json").exists())
             self.assertTrue((replay_dir / "bidflow_metadata.json").exists())
             metrics = json.loads((replay_dir / "cass_focal_backtest_metrics.json").read_text(encoding="utf-8"))
-            self.assertEqual(metrics["policy"], "cass_frontier")
+            self.assertEqual(metrics["policy"], "cass_logit")

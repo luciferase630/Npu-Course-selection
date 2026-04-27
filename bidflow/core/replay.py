@@ -17,6 +17,7 @@ def run_replay(
     config_path: str = "configs/simple_model.yaml",
     formula_prompt: bool = False,
     cass_policy: str = "cass_v2",
+    cass_params: dict[str, float | int] | None = None,
 ) -> dict:
     if agent == "cass":
         return run_cass_backtest(
@@ -26,6 +27,7 @@ def run_replay(
             output_dir=output,
             data_dir=data_dir,
             cass_policy=cass_policy,
+            cass_params=cass_params,
         )
     if agent == "llm":
         return run_llm_backtest(

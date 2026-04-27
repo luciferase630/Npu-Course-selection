@@ -77,6 +77,7 @@ bidflow session run `
 - `cass_value`：强省豆版本，适合观察“别当怨种”的极限。
 - `cass_v2`：默认 balanced 策略，当前多市场回测平均 utility 最高。
 - `cass_frontier`：极端 value/bean frontier，对照用。
+- `cass_logit`：用 S 型压力曲线替代理性压力曲线，用来检查响应函数形式敏感性。
 
 当前 CLI 先委托旧 runner，所以旧 CSV schema 和旧输出结构仍然保留。新输出目录会额外包含：
 
@@ -106,6 +107,28 @@ bidflow analyze focal --run ./outputs/my_test --student-id S001
 ```
 
 主指标是 `course_outcome_utility`。豆子相关字段只用于诊断是否“怨种式多投”，不作为福利成本扣除。
+
+## CASS 策略族与敏感度
+
+完整 CASS 对比不只跑一个默认策略，而是跑 6 个策略族和一组 one-at-a-time 敏感度扰动：
+
+```powershell
+bidflow analyze cass-sensitivity
+```
+
+快速 smoke 版本：
+
+```powershell
+bidflow analyze cass-sensitivity --quick
+```
+
+默认输出：
+
+- `outputs/tables/cass_sensitivity_detail.csv`
+- `outputs/tables/cass_sensitivity_policy_summary.csv`
+- `outputs/tables/cass_sensitivity_oat_summary.csv`
+
+这个入口用于复现“CASS-v2 不是拍脑袋分段函数”的模型检验：同时比较 v1 分段、smooth 连续曲线、value 省豆、balanced 默认、frontier 边界、logit 响应，并检查关键超参数扰动后结论是否翻转。
 
 ## 旧入口
 

@@ -23,9 +23,10 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     run.add_argument(
         "--policy",
         default="cass_v2",
-        choices=["cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_v2"],
+        choices=["cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_logit", "cass_v2"],
         help="CASS policy variant when --agent cass.",
     )
+    run.add_argument("--param", action="append", default=[], help="CASS hyperparameter override in key=value form.")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -51,6 +52,7 @@ def run(args: argparse.Namespace) -> int:
             config_path=args.config,
             formula_prompt=args.formula_prompt,
             cass_policy=args.policy,
+            cass_params=_parse_params(args.param),
         )
         _write_replay_metadata(output, args, agent)
         results.append({"agent": agent, "output": str(output), "course_outcome_delta": metrics.get("delta_course_outcome_utility")})
@@ -69,5 +71,16 @@ def _write_replay_metadata(output: Path, args: argparse.Namespace, agent: str) -
         "data_dir": args.data_dir,
         "formula_prompt": bool(args.formula_prompt),
         "policy": args.policy if agent == "cass" else "",
+        "params": _parse_params(args.param) if agent == "cass" else {},
     }
     (output / "bidflow_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _parse_params(values: list[str]) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for item in values:
+        if "=" not in item:
+            raise SystemExit(f"--param must use key=value form: {item}")
+        key, raw_value = item.split("=", 1)
+        result[key.strip()] = float(raw_value)
+    return result
