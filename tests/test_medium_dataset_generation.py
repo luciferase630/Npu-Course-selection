@@ -15,6 +15,11 @@ from src.data_generation.generate_synthetic_mvp import (
     build_shape,
     write_dataset,
 )
+from src.data_generation.scenarios import (
+    apply_scenario_overrides,
+    load_generation_scenario,
+    scenario_from_mapping,
+)
 from src.data_generation.audit_synthetic_dataset import audit_rows
 from src.data_generation.io import (
     load_courses,
@@ -379,6 +384,7 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertEqual(shape.n_course_sections, 240)
         self.assertEqual(shape.n_profiles, 6)
         self.assertEqual(shape.n_course_codes, 154)
+        self.assertEqual(shape.scenario_name, "research_large_high")
 
         dataset = build_synthetic_dataset(20260425, shape)
         self.assertEqual(len(dataset["profiles"]), 6)
@@ -449,6 +455,90 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertGreaterEqual(pressure["high_pressure_required_overloaded_section_count"], 12)
         self.assertGreaterEqual(pressure["predicted_admission_rate_proxy"], 0.60)
         self.assertLessEqual(pressure["predicted_admission_rate_proxy"], 0.80)
+
+    def test_builtin_generation_scenarios_load(self) -> None:
+        paths = [
+            "configs/generation/medium.yaml",
+            "configs/generation/behavioral_large.yaml",
+            "configs/generation/research_large_high.yaml",
+            "configs/generation/research_large_medium.yaml",
+            "configs/generation/research_large_sparse_hotspots.yaml",
+        ]
+        scenarios = [load_generation_scenario(path) for path in paths]
+        self.assertEqual([scenario.name for scenario in scenarios], [
+            "medium",
+            "behavioral_large",
+            "research_large_high",
+            "research_large_medium",
+            "research_large_sparse_hotspots",
+        ])
+        self.assertEqual(scenarios[2].category_counts["MajorElective"], 44)
+        self.assertEqual(scenarios[2].eligible_bounds, (120, 185))
+
+    def test_scenario_and_preset_shapes_match(self) -> None:
+        scenario = load_generation_scenario("configs/generation/research_large_high.yaml")
+        shape = build_shape("research_large")
+        self.assertEqual(scenario.n_students, shape.n_students)
+        self.assertEqual(scenario.n_course_sections, shape.n_course_sections)
+        self.assertEqual(scenario.n_profiles, shape.n_profiles)
+        self.assertEqual(scenario.n_course_codes, shape.n_course_codes)
+        self.assertEqual(scenario.category_counts, shape.category_counts)
+        self.assertEqual(scenario.eligible_bounds, shape.eligible_bounds)
+
+    def test_scenario_overrides_recompute_derived_bounds(self) -> None:
+        scenario = load_generation_scenario("configs/generation/research_large_high.yaml")
+        updated = apply_scenario_overrides(
+            scenario,
+            n_course_sections=120,
+            n_course_codes=77,
+            n_profiles=4,
+        )
+        self.assertIsNone(updated.category_counts)
+        self.assertIsNone(updated.eligible_bounds)
+        self.assertEqual(updated.n_course_sections, 120)
+        self.assertEqual(updated.n_course_codes, 77)
+
+    def test_invalid_generation_scenarios_are_rejected(self) -> None:
+        valid = {
+            "name": "bad",
+            "version": 1,
+            "competition_profile": "high",
+            "shape": {
+                "preset": "custom",
+                "n_students": 10,
+                "n_course_sections": 30,
+                "n_profiles": 3,
+                "n_course_codes": 20,
+            },
+            "catalog": {
+                "category_counts": {
+                    "Foundation": 4,
+                    "MajorCore": 11,
+                    "MajorElective": 3,
+                    "GeneralElective": 1,
+                    "English": 1,
+                    "PE": 0,
+                    "LabSeminar": 0,
+                }
+            },
+            "eligibility": {"eligible_bounds": [10, 20]},
+        }
+        with self.assertRaisesRegex(ValueError, "n_profiles"):
+            payload = dict(valid)
+            payload["shape"] = dict(valid["shape"], n_profiles=7)
+            scenario_from_mapping(payload)
+        with self.assertRaisesRegex(ValueError, "sum"):
+            payload = dict(valid)
+            payload["catalog"] = {"category_counts": {"Foundation": 1}}
+            scenario_from_mapping(payload)
+        with self.assertRaisesRegex(ValueError, "must not exceed"):
+            payload = dict(valid)
+            payload["shape"] = dict(valid["shape"], n_course_sections=10, n_course_codes=20)
+            scenario_from_mapping(payload)
+        with self.assertRaisesRegex(ValueError, "eligible_bounds"):
+            payload = dict(valid)
+            payload["eligibility"] = {"eligible_bounds": [25, 20]}
+            scenario_from_mapping(payload)
 
     def test_custom_dataset_seed_behavior(self) -> None:
         first = build_custom_dataset(42, n_students=10, n_course_sections=20, n_profiles=3)

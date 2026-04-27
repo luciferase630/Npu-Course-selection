@@ -23,8 +23,7 @@ python -m unittest discover -s tests
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp `
-  --config configs/simple_model.yaml `
-  --preset research_large
+  --scenario configs/generation/research_large_high.yaml
 
 python -m src.data_generation.audit_synthetic_dataset `
   --data-dir data/synthetic/research_large
@@ -34,9 +33,7 @@ python -m src.data_generation.audit_synthetic_dataset `
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp `
-  --config configs/simple_model.yaml `
-  --preset research_large `
-  --competition-profile medium
+  --scenario configs/generation/research_large_medium.yaml
 
 python -m src.data_generation.audit_synthetic_dataset `
   --data-dir data/synthetic/research_large_medium_competition
@@ -46,9 +43,7 @@ python -m src.data_generation.audit_synthetic_dataset `
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp `
-  --config configs/simple_model.yaml `
-  --preset research_large `
-  --competition-profile sparse_hotspots
+  --scenario configs/generation/research_large_sparse_hotspots.yaml
 
 python -m src.data_generation.audit_synthetic_dataset `
   --data-dir data/synthetic/research_large_sparse_hotspots
@@ -155,8 +150,11 @@ python -m src.analysis.llm_focal_backtest `
 这些命令已经封装在 `scripts/`：
 
 - `scripts/run_smoke.ps1`
+- `scripts/generation/generate_research_large.ps1`
 - `scripts/run_research_large_behavioral.ps1`
+- `scripts/experiments/run_research_large_behavioral.ps1`
 - `scripts/run_s048_cass_replay.ps1`
+- `scripts/experiments/run_s048_cass_replay.ps1`
 - `scripts/run_s048_cass_online.ps1`
 - `scripts/run_s048_mix30_market.ps1`
 

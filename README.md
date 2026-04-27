@@ -140,6 +140,7 @@ outputs/     实验输出目录；默认不入库
 关键实现文件：
 
 - `src/data_generation/generate_synthetic_mvp.py`：生成 medium、behavioral_large、research_large 数据集。
+- `configs/generation/*.yaml`：生成器场景配置；新增数据集优先改这里。
 - `src/data_generation/audit_synthetic_dataset.py`：审计合成数据竞争结构。
 - `src/experiments/run_single_round_mvp.py`：在线实验 runner。
 - `src/student_agents/behavioral.py`：普通 BA persona 分布。
@@ -169,11 +170,19 @@ python -m unittest discover -s tests
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp `
-  --config configs/simple_model.yaml `
-  --preset research_large
+  --scenario configs/generation/research_large_high.yaml
 
 python -m src.data_generation.audit_synthetic_dataset `
   --data-dir data/synthetic/research_large
+```
+
+旧 preset 入口仍然保留：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp `
+  --config configs/simple_model.yaml `
+  --preset research_large `
+  --competition-profile high
 ```
 
 跑 800 人 behavioral baseline：
@@ -218,6 +227,8 @@ python -m src.experiments.run_single_round_mvp `
 
 ```powershell
 .\scripts\run_research_large_behavioral.ps1
+.\scripts\generation\generate_research_large.ps1
+.\scripts\experiments\run_research_large_behavioral.ps1
 .\scripts\run_s048_cass_replay.ps1
 .\scripts\run_s048_cass_online.ps1
 ```
