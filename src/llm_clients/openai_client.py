@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.llm_clients.formula_extractor import (
@@ -12,6 +15,18 @@ from src.llm_clients.formula_extractor import (
     needs_formula_reconsideration,
     summarize_formula_signals,
 )
+
+
+@dataclass
+class OpenAIProvider:
+    name: str
+    model: str
+    client: object
+    wire_api: str = "chat_completions"
+    timeout_seconds: float = 60.0
+    reasoning_effort: str | None = None
+    disable_response_storage: bool = False
+    temperature: float | None = None
 
 
 def load_local_env(path: str | Path = ".env.local") -> None:
@@ -113,10 +128,36 @@ def _usage_value(usage: object, key: str) -> int:
 def _response_usage(response: object) -> dict:
     usage = getattr(response, "usage", None)
     return {
-        "prompt_tokens": _usage_value(usage, "prompt_tokens"),
-        "completion_tokens": _usage_value(usage, "completion_tokens"),
+        "prompt_tokens": _usage_value(usage, "prompt_tokens") or _usage_value(usage, "input_tokens"),
+        "completion_tokens": _usage_value(usage, "completion_tokens") or _usage_value(usage, "output_tokens"),
         "total_tokens": _usage_value(usage, "total_tokens"),
     }
+
+
+def _response_content(response: object) -> str:
+    output_text = getattr(response, "output_text", None)
+    if output_text:
+        return str(output_text)
+    choices = getattr(response, "choices", None)
+    if choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None)
+        if content:
+            return str(content)
+    output = getattr(response, "output", None)
+    if isinstance(output, list):
+        chunks: list[str] = []
+        for item in output:
+            content_items = item.get("content", []) if isinstance(item, dict) else getattr(item, "content", [])
+            if not isinstance(content_items, list):
+                continue
+            for content_item in content_items:
+                text = content_item.get("text") if isinstance(content_item, dict) else getattr(content_item, "text", None)
+                if text:
+                    chunks.append(str(text))
+        if chunks:
+            return "".join(chunks)
+    return ""
 
 
 def _safe_tool_name(record: dict) -> str:
@@ -254,38 +295,176 @@ def _optional_temperature() -> float | None:
         return None
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_optional_float(name: str) -> float | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _normalize_wire_api(value: str | None) -> str:
+    normalized = (value or "chat_completions").strip().lower().replace("-", "_")
+    if normalized in {"chat", "chat_completion", "chat_completions", "completions"}:
+        return "chat_completions"
+    if normalized in {"response", "responses"}:
+        return "responses"
+    raise RuntimeError(f"Unsupported OpenAI wire API: {value}")
+
+
+def _redact_secret_like_text(value: object) -> str:
+    text = str(value)
+    text = re.sub(r"(sk|gx)-[A-Za-z0-9_-]{12,}", r"\1-<redacted>", text)
+    return text[:240]
+
+
+def _provider_error_type(exc: Exception) -> str:
+    joined = f"{exc.__class__.__name__} {exc}".lower()
+    if any(token in joined for token in ("quota", "insufficient", "billing", "credits")):
+        return "quota"
+    if any(token in joined for token in ("rate", "429", "too many requests")):
+        return "rate_limit"
+    if any(token in joined for token in ("auth", "unauthorized", "forbidden", "401", "403", "api key")):
+        return "auth"
+    if any(token in joined for token in ("timeout", "timed out", "connection", "connect")):
+        return "network"
+    if any(token in joined for token in ("server", "502", "503", "504", "overloaded")):
+        return "provider"
+    return "provider"
+
+
+def _provider_from_env(prefix: str, client_class, *, required: bool) -> OpenAIProvider | None:
+    api_key = os.environ.get(f"{prefix}_API_KEY")
+    model = os.environ.get(f"{prefix}_MODEL")
+    if not api_key or not model:
+        if required:
+            raise RuntimeError(f"{prefix}_API_KEY and {prefix}_MODEL are required for --agent openai")
+        return None
+    timeout_seconds = _env_float(f"{prefix}_TIMEOUT_SECONDS", _env_float("OPENAI_TIMEOUT_SECONDS", 60.0))
+    kwargs = {"api_key": api_key, "timeout": timeout_seconds}
+    base_url = os.environ.get(f"{prefix}_BASE_URL")
+    if base_url:
+        kwargs["base_url"] = base_url
+    name = os.environ.get(f"{prefix}_PROVIDER_NAME") or os.environ.get(f"{prefix}_NAME") or prefix
+    return OpenAIProvider(
+        name=name,
+        model=model,
+        client=client_class(**kwargs),
+        wire_api=_normalize_wire_api(os.environ.get(f"{prefix}_WIRE_API")),
+        timeout_seconds=timeout_seconds,
+        reasoning_effort=os.environ.get(f"{prefix}_REASONING_EFFORT"),
+        disable_response_storage=_env_bool(f"{prefix}_DISABLE_RESPONSE_STORAGE", False),
+        temperature=_env_optional_float(f"{prefix}_TEMPERATURE")
+        if os.environ.get(f"{prefix}_TEMPERATURE") is not None
+        else _optional_temperature(),
+    )
+
+
+def _providers_from_env() -> list[OpenAIProvider]:
+    load_local_env()
+    from openai import OpenAI
+
+    providers = [_provider_from_env("OPENAI", OpenAI, required=True)]
+    index = 1
+    while True:
+        prefix = f"OPENAI_FALLBACK_{index}"
+        if not any(os.environ.get(f"{prefix}_{key}") for key in ("API_KEY", "MODEL", "BASE_URL", "WIRE_API")):
+            break
+        provider = _provider_from_env(prefix, OpenAI, required=False)
+        if provider is not None:
+            providers.append(provider)
+        index += 1
+    return [provider for provider in providers if provider is not None]
+
+
 class OpenAICompatibleClient:
-    def __init__(self) -> None:
-        load_local_env()
-        api_key = os.environ.get("OPENAI_API_KEY")
-        model = os.environ.get("OPENAI_MODEL")
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for --agent openai")
-        if not model:
-            raise RuntimeError("OPENAI_MODEL is required for --agent openai")
-        from openai import OpenAI
+    def __init__(self, providers: list[OpenAIProvider] | None = None) -> None:
+        self.providers = providers if providers is not None else _providers_from_env()
+        if not self.providers:
+            raise RuntimeError("At least one OpenAI-compatible provider is required")
+        self.active_provider_index = 0
 
-        timeout_seconds = float(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
-        kwargs = {"api_key": api_key, "timeout": timeout_seconds}
-        base_url = os.environ.get("OPENAI_BASE_URL")
-        if base_url:
-            kwargs["base_url"] = base_url
-        self.client = OpenAI(**kwargs)
-        self.model = model
-        self.temperature = _optional_temperature()
-
-    def _chat_create(self, messages: list[dict]) -> object:
+    def _chat_create(self, provider: OpenAIProvider, messages: list[dict]) -> object:
         kwargs = {
-            "model": self.model,
+            "model": provider.model,
             "messages": messages,
             "response_format": {"type": "json_object"},
         }
-        if self.temperature is not None:
-            kwargs["temperature"] = self.temperature
-        return self.client.chat.completions.create(**kwargs)
+        if provider.temperature is not None:
+            kwargs["temperature"] = provider.temperature
+        return provider.client.chat.completions.create(**kwargs)
+
+    def _responses_create(self, provider: OpenAIProvider, messages: list[dict]) -> object:
+        system_parts = [str(message.get("content", "")) for message in messages if message.get("role") == "system"]
+        input_messages = [
+            {"role": message.get("role", "user"), "content": str(message.get("content", ""))}
+            for message in messages
+            if message.get("role") != "system"
+        ]
+        kwargs = {
+            "model": provider.model,
+            "input": input_messages or "",
+            "text": {"format": {"type": "json_object"}},
+        }
+        if system_parts:
+            kwargs["instructions"] = "\n\n".join(system_parts)
+        if provider.reasoning_effort:
+            kwargs["reasoning"] = {"effort": provider.reasoning_effort}
+        if provider.disable_response_storage:
+            kwargs["store"] = False
+        return provider.client.responses.create(**kwargs)
+
+    def _provider_create(self, provider: OpenAIProvider, messages: list[dict]) -> object:
+        if provider.wire_api == "responses":
+            return self._responses_create(provider, messages)
+        return self._chat_create(provider, messages)
+
+    def _create_with_fallback(self, messages: list[dict]) -> tuple[object, OpenAIProvider, list[dict]]:
+        fallback_events: list[dict] = []
+        start_index = min(self.active_provider_index, len(self.providers) - 1)
+        for provider_index in range(start_index, len(self.providers)):
+            provider = self.providers[provider_index]
+            try:
+                response = self._provider_create(provider, messages)
+                self.active_provider_index = provider_index
+                return response, provider, fallback_events
+            except Exception as exc:
+                error_type = _provider_error_type(exc)
+                if provider_index >= len(self.providers) - 1:
+                    raise
+                next_provider = self.providers[provider_index + 1]
+                fallback_events.append(
+                    {
+                        "failed_provider": provider.name,
+                        "next_provider": next_provider.name,
+                        "error_type": error_type,
+                        "error_message": _redact_secret_like_text(exc),
+                    }
+                )
+                self.active_provider_index = provider_index + 1
+        raise RuntimeError("OpenAI-compatible provider fallback exhausted")
 
     def complete(self, system_prompt: str, interaction_payload: dict) -> dict:
-        response = self._chat_create(
+        response, _provider, _fallback_events = self._create_with_fallback(
             [
                 {"role": "system", "content": system_prompt},
                 {
@@ -294,7 +473,7 @@ class OpenAICompatibleClient:
                 },
             ]
         )
-        content = response.choices[0].message.content
+        content = _response_content(response)
         if not content:
             raise RuntimeError("OpenAI-compatible response had empty content")
         return parse_json_object(content)
@@ -322,6 +501,9 @@ class OpenAICompatibleClient:
         api_prompt_tokens = 0
         api_completion_tokens = 0
         api_total_tokens = 0
+        provider_name_counts: Counter[str] = Counter()
+        provider_fallback_count = 0
+        provider_fallback_error_counts: Counter[str] = Counter()
         formula_metrics = empty_formula_metrics()
         formula_reconsideration_prompt_count = 0
         course_context = formula_course_context_from_session(session)
@@ -336,10 +518,22 @@ class OpenAICompatibleClient:
             request_char_count = sum(len(message.get("content", "")) for message in messages)
             request_char_count_total += request_char_count
             request_char_count_max = max(request_char_count_max, request_char_count)
-            response = self._chat_create(messages)
-            content = response.choices[0].message.content
+            response, provider, fallback_events = self._create_with_fallback(messages)
+            provider_name_counts[provider.name] += 1
+            provider_fallback_count += len(fallback_events)
+            for event in fallback_events:
+                provider_fallback_error_counts[str(event.get("error_type", "provider"))] += 1
+            content = _response_content(response)
             usage = _response_usage(response)
             response_metadata = _response_metadata(response)
+            response_metadata.update(
+                {
+                    "provider_name": provider.name,
+                    "provider_wire_api": provider.wire_api,
+                    "provider_model": provider.model,
+                    "provider_fallback_events": fallback_events,
+                }
+            )
             api_prompt_tokens += usage["prompt_tokens"]
             api_completion_tokens += usage["completion_tokens"]
             api_total_tokens += usage["total_tokens"]
@@ -441,6 +635,9 @@ class OpenAICompatibleClient:
                     "api_prompt_tokens": api_prompt_tokens,
                     "api_completion_tokens": api_completion_tokens,
                     "api_total_tokens": api_total_tokens,
+                    "provider_name_counts": dict(sorted(provider_name_counts.items())),
+                    "provider_fallback_count": provider_fallback_count,
+                    "provider_fallback_error_counts": dict(sorted(provider_fallback_error_counts.items())),
                     "formula_metrics": formula_metrics,
                     "formula_reconsideration_prompt_count": formula_reconsideration_prompt_count,
                 }
@@ -485,6 +682,9 @@ class OpenAICompatibleClient:
             "api_prompt_tokens": api_prompt_tokens,
             "api_completion_tokens": api_completion_tokens,
             "api_total_tokens": api_total_tokens,
+            "provider_name_counts": dict(sorted(provider_name_counts.items())),
+            "provider_fallback_count": provider_fallback_count,
+            "provider_fallback_error_counts": dict(sorted(provider_fallback_error_counts.items())),
             "formula_metrics": formula_metrics,
             "formula_reconsideration_prompt_count": formula_reconsideration_prompt_count,
             "error": f"tool interaction exceeded max_rounds={max_rounds}",

@@ -830,6 +830,9 @@ def main() -> None:
     llm_api_prompt_tokens = 0
     llm_api_completion_tokens = 0
     llm_api_total_tokens = 0
+    llm_provider_name_counts: Counter[str] = Counter()
+    llm_provider_fallback_count = 0
+    llm_provider_fallback_error_counts: Counter[str] = Counter()
     formula_metrics = empty_formula_metrics()
     formula_reconsideration_prompt_count = 0
     background_formula_policy_application_count = 0
@@ -984,6 +987,15 @@ def main() -> None:
                 llm_api_prompt_tokens += int(tool_result.get("api_prompt_tokens", 0))
                 llm_api_completion_tokens += int(tool_result.get("api_completion_tokens", 0))
                 llm_api_total_tokens += int(tool_result.get("api_total_tokens", 0))
+                provider_counts = tool_result.get("provider_name_counts", {})
+                if isinstance(provider_counts, dict):
+                    for provider_name, count in provider_counts.items():
+                        llm_provider_name_counts[str(provider_name)] += int(count or 0)
+                llm_provider_fallback_count += int(tool_result.get("provider_fallback_count", 0) or 0)
+                provider_fallback_errors = tool_result.get("provider_fallback_error_counts", {})
+                if isinstance(provider_fallback_errors, dict):
+                    for error_type, count in provider_fallback_errors.items():
+                        llm_provider_fallback_error_counts[str(error_type)] += int(count or 0)
                 formula_metrics = merge_formula_metrics(
                     formula_metrics,
                     tool_result.get("formula_metrics", empty_formula_metrics()),
@@ -1568,6 +1580,9 @@ def main() -> None:
         "llm_api_prompt_tokens": llm_api_prompt_tokens,
         "llm_api_completion_tokens": llm_api_completion_tokens,
         "llm_api_total_tokens": llm_api_total_tokens,
+        "llm_provider_name_counts": dict(sorted(llm_provider_name_counts.items())),
+        "llm_provider_fallback_count": llm_provider_fallback_count,
+        "llm_provider_fallback_error_counts": dict(sorted(llm_provider_fallback_error_counts.items())),
         **formula_metric_output,
         "background_formula_policy_application_count": background_formula_policy_application_count,
         "background_formula_policy_signal_count": background_formula_policy_signal_count,

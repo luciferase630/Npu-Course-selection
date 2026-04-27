@@ -7,6 +7,51 @@ from src.student_agents.context import split_time_slots
 
 
 @dataclass(frozen=True)
+class CassTierRule:
+    name: str
+    max_ratio: float | None
+    min_premium: int
+    premium_multiplier: float
+
+
+@dataclass(frozen=True)
+class CassConfig:
+    max_courses: int = 12
+    first_round_required_bid: int = 5
+    first_round_other_bid: int = 1
+    required_base_bid: int = 2
+    other_base_bid: int = 1
+    final_required_multiplier: float = 1.3
+    hot_optional_low_utility_threshold: float = 85.0
+    hot_optional_premium_cap: int = 4
+    max_single_bid_budget_fraction: float = 0.20
+    required_boost: float = 180.0
+    required_penalty_weight: float = 0.25
+    strong_elective_boost: float = 45.0
+    strong_elective_penalty_weight: float = 0.10
+    optional_target_boost: float = 12.0
+    optional_target_penalty_weight: float = 0.04
+    required_hot_penalty_multiplier: float = 12.0
+    optional_hot_penalty_multiplier: float = 24.0
+    credit_preference_target: float = 3.0
+    credit_preference_weight: float = 2.0
+    previous_selected_bonus: float = 8.0
+    required_budget_floor: int = 2
+    optional_budget_floor: int = 1
+    safety_margin_max_add: int = 3
+    tiers: tuple[CassTierRule, ...] = (
+        CassTierRule("free", 0.3, 0, 0.0),
+        CassTierRule("light", 0.6, 1, 0.0),
+        CassTierRule("filling", 1.0, 2, 3.0),
+        CassTierRule("crowded", 1.5, 5, 4.0),
+        CassTierRule("hot", None, 8, 5.0),
+    )
+
+
+DEFAULT_CASS_CONFIG = CassConfig()
+
+
+@dataclass(frozen=True)
 class CassCourseOption:
     course_id: str
     course_code: str
@@ -27,16 +72,15 @@ class CassDecision:
     selected_options: list[CassCourseOption]
 
 
-def crowding_tier(ratio: float) -> str:
-    if ratio <= 0.3:
-        return "free"
-    if ratio <= 0.6:
-        return "light"
-    if ratio <= 1.0:
-        return "filling"
-    if ratio <= 1.5:
-        return "crowded"
-    return "hot"
+def _tier_rule(ratio: float, config: CassConfig = DEFAULT_CASS_CONFIG) -> CassTierRule:
+    for rule in config.tiers:
+        if rule.max_ratio is None or ratio <= rule.max_ratio:
+            return rule
+    return config.tiers[-1]
+
+
+def crowding_tier(ratio: float, config: CassConfig = DEFAULT_CASS_CONFIG) -> str:
+    return _tier_rule(ratio, config).name
 
 
 def compute_cass_bid(
@@ -47,27 +91,20 @@ def compute_cass_bid(
     time_point: int,
     time_points_total: int,
     budget: int,
+    config: CassConfig = DEFAULT_CASS_CONFIG,
 ) -> int:
     if time_point <= 1:
-        return 5 if is_required else 1
+        return config.first_round_required_bid if is_required else config.first_round_other_bid
 
-    base = 2 if is_required else 1
-    if ratio <= 0.3:
-        premium = 0
-    elif ratio <= 0.6:
-        premium = 1
-    elif ratio <= 1.0:
-        premium = max(2, int(ratio * 3))
-    elif ratio <= 1.5:
-        premium = max(5, int(ratio * 4))
-    else:
-        premium = max(8, int(ratio * 5))
-        if not is_required and utility < 85:
-            premium = min(premium, 4)
+    base = config.required_base_bid if is_required else config.other_base_bid
+    rule = _tier_rule(ratio, config)
+    premium = max(rule.min_premium, int(ratio * rule.premium_multiplier)) if rule.premium_multiplier else rule.min_premium
+    if rule.name == "hot" and not is_required and utility < config.hot_optional_low_utility_threshold:
+        premium = min(premium, config.hot_optional_premium_cap)
 
     bid = base + premium
     if time_point >= time_points_total and is_required:
-        bid = int(bid * 1.3)
+        bid = int(bid * config.final_required_multiplier)
     return max(1, bid)
 
 
@@ -84,7 +121,9 @@ def cass_select_and_bid(
     time_point: int,
     time_points_total: int,
     max_courses: int = 12,
+    config: CassConfig = DEFAULT_CASS_CONFIG,
 ) -> CassDecision:
+    max_courses = int(max_courses if max_courses != 12 else config.max_courses)
     requirement_by_code = {requirement.course_code: requirement for requirement in requirements}
     options = [
         CassCourseOption(
@@ -114,18 +153,22 @@ def cass_select_and_bid(
         required_boost = 0.0
         if requirement is not None:
             if requirement.requirement_type == "required":
-                required_boost = 180.0 + penalty * 0.25
+                required_boost = config.required_boost + penalty * config.required_penalty_weight
             elif requirement.requirement_type == "strong_elective_requirement":
-                required_boost = 45.0 + penalty * 0.10
+                required_boost = config.strong_elective_boost + penalty * config.strong_elective_penalty_weight
             elif requirement.requirement_type == "optional_target":
-                required_boost = 12.0 + penalty * 0.04
-        hot_penalty = ratio * (12.0 if requirement and requirement.requirement_type == "required" else 24.0)
+                required_boost = config.optional_target_boost + penalty * config.optional_target_penalty_weight
+        hot_penalty = ratio * (
+            config.required_hot_penalty_multiplier
+            if requirement and requirement.requirement_type == "required"
+            else config.optional_hot_penalty_multiplier
+        )
         return (
             option.utility
             + required_boost
-            + (3.0 - option.credit) * 2.0
+            + (config.credit_preference_target - option.credit) * config.credit_preference_weight
             - hot_penalty
-            + (8.0 if option.previous_selected else 0.0)
+            + (config.previous_selected_bonus if option.previous_selected else 0.0)
         )
 
     ordered = sorted(options, key=priority, reverse=True)
@@ -160,13 +203,14 @@ def cass_select_and_bid(
             time_point=time_point,
             time_points_total=time_points_total,
             budget=student.budget_initial,
+            config=config,
         )
 
-    max_single = max(3, student.budget_initial // 5)
+    max_single = max(3, int(student.budget_initial * config.max_single_bid_budget_fraction))
     for course_id, bid in list(bids.items()):
         bids[course_id] = min(bid, max_single)
 
-    bids = _compress_to_budget(bids, selected, requirement_by_code, student.budget_initial)
+    bids = _compress_to_budget(bids, selected, requirement_by_code, student.budget_initial, config)
     if time_point > 1:
         bids = _add_targeted_safety_margin(
             bids,
@@ -174,8 +218,9 @@ def cass_select_and_bid(
             requirement_by_code,
             student.budget_initial,
             max_single,
+            config,
         )
-    diagnostics = cass_diagnostics(bids, selected, requirement_by_code, student.budget_initial)
+    diagnostics = cass_diagnostics(bids, selected, requirement_by_code, student.budget_initial, config)
     return CassDecision(bids=bids, diagnostics=diagnostics, selected_options=selected)
 
 
@@ -184,6 +229,7 @@ def _compress_to_budget(
     selected: list[CassCourseOption],
     requirement_by_code: dict[str, CourseRequirement],
     budget: int,
+    config: CassConfig = DEFAULT_CASS_CONFIG,
 ) -> dict[str, int]:
     total = sum(bids.values())
     if total <= budget:
@@ -209,7 +255,7 @@ def _compress_to_budget(
     for course_id in all_courses:
         if total <= budget:
             break
-        floor = 2 if course_id not in optional else 1
+        floor = config.required_budget_floor if course_id not in optional else config.optional_budget_floor
         reduction = min(bids[course_id] - floor, total - budget)
         if reduction > 0:
             bids[course_id] -= reduction
@@ -223,6 +269,7 @@ def _add_targeted_safety_margin(
     requirement_by_code: dict[str, CourseRequirement],
     budget: int,
     max_single: int,
+    config: CassConfig = DEFAULT_CASS_CONFIG,
 ) -> dict[str, int]:
     surplus = budget - sum(bids.values())
     if surplus <= 0:
@@ -243,7 +290,7 @@ def _add_targeted_safety_margin(
         room = max(0, max_single - bids.get(course_id, 0))
         if room <= 0:
             continue
-        add = min(3, room, surplus)
+        add = min(config.safety_margin_max_add, room, surplus)
         bids[course_id] += add
         surplus -= add
     return bids
@@ -254,12 +301,13 @@ def cass_diagnostics(
     selected: list[CassCourseOption],
     requirement_by_code: dict[str, CourseRequirement],
     budget: int,
+    config: CassConfig = DEFAULT_CASS_CONFIG,
 ) -> dict[str, object]:
     tier_counts = {"free": 0, "light": 0, "filling": 0, "crowded": 0, "hot": 0}
     required_count = 0
     for option in selected:
         ratio = option.waitlist_count / max(1, option.capacity)
-        tier_counts[crowding_tier(ratio)] += 1
+        tier_counts[crowding_tier(ratio, config)] += 1
         requirement = requirement_by_code.get(option.course_code)
         if requirement and requirement.requirement_type == "required":
             required_count += 1
