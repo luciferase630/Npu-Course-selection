@@ -19,6 +19,8 @@ from src.data_generation.io import read_csv_rows
 from src.models import CourseRequirement, Student, UtilityEdge
 from src.student_agents.behavioral import (
     BEHAVIORAL_CATEGORY_LIMITS,
+    behavioral_adjusted_selection_score,
+    behavioral_candidate_passes_threshold,
     behavioral_target_course_count,
     sample_behavioral_profile,
     score_behavioral_candidate,
@@ -143,7 +145,7 @@ def build_competition_pressure_summary(
         student_model = student_models[student_id]
         behavioral_profile = sample_behavioral_profile(student_model, base_seed)
         persona_counts[behavioral_profile.persona] += 1
-        target_count = behavioral_target_course_count(student_model, behavioral_profile)
+        target_count = behavioral_target_course_count(student_model, behavioral_profile, 3, 3)
         credit_cap = student_model.credit_cap
         rng = random.Random(stable_behavior_seed(base_seed + 7919, student_id))
         scored_edges = []
@@ -163,6 +165,8 @@ def build_competition_pressure_summary(
                 crowding=crowding,
                 previous_selected=False,
                 profile=behavioral_profile,
+                credit=_float(course.get("credit")),
+                time_pressure=1.0,
                 rng=rng,
             )
             scored_edges.append((score, components, edge, course, requirement is not None))
@@ -177,48 +181,73 @@ def build_competition_pressure_summary(
         selected_categories: Counter[str] = Counter()
         selected_count = 0
         selected_credits = 0.0
+        selected_course_ids: set[str] = set()
         for pass_index in range(2):
-            for _score, _components, edge, course, _is_requirement in attended_edges:
-                course_code = str(course.get("course_code", ""))
-                course_slots = _time_slot_set(course)
-                credit = _float(course.get("credit"))
-                category = str(course.get("category", ""))
-                if selected_count >= target_count:
+            while selected_count < target_count:
+                ordered = sorted(
+                    attended_edges,
+                    key=lambda item: behavioral_adjusted_selection_score(
+                        float(item[0]),
+                        str(item[3].get("category", "")),
+                        selected_categories,
+                        behavioral_profile,
+                    ),
+                    reverse=True,
+                )
+                progressed = False
+                for _score, components, edge, course, _is_requirement in ordered:
+                    course_id = str(edge["course_id"])
+                    course_code = str(course.get("course_code", ""))
+                    course_slots = _time_slot_set(course)
+                    credit = _float(course.get("credit"))
+                    category = str(course.get("category", ""))
+                    if course_id in selected_course_ids:
+                        continue
+                    if pass_index == 0 and selected_categories[category] >= BEHAVIORAL_CATEGORY_LIMITS.get(category, target_count):
+                        continue
+                    if not behavioral_candidate_passes_threshold(components, behavioral_profile, relaxed=pass_index > 0):
+                        continue
+                    if course_code in selected_codes:
+                        continue
+                    if selected_slots & course_slots:
+                        continue
+                    if selected_credits + credit > credit_cap:
+                        continue
+                    selected_course_ids.add(course_id)
+                    selected_codes.add(course_code)
+                    selected_slots.update(course_slots)
+                    selected_categories[category] += 1
+                    selected_count += 1
+                    selected_credits += credit
+                    demand[course_id] += 1
+                    progressed = True
                     break
-                if pass_index == 0 and selected_categories[category] >= BEHAVIORAL_CATEGORY_LIMITS.get(category, target_count):
-                    continue
-                if course_code in selected_codes:
-                    continue
-                if selected_slots & course_slots:
-                    continue
-                if selected_credits + credit > credit_cap:
-                    continue
-                selected_codes.add(course_code)
-                selected_slots.update(course_slots)
-                selected_categories[category] += 1
-                selected_count += 1
-                selected_credits += credit
-                demand[str(edge["course_id"])] += 1
+                if not progressed:
+                    break
             if selected_count >= target_count:
                 break
         if selected_count < 5:
             for _score, _components, edge, course, _is_requirement in attended_edges:
+                course_id = str(edge["course_id"])
                 course_code = str(course.get("course_code", ""))
                 course_slots = _time_slot_set(course)
                 credit = _float(course.get("credit"))
                 category = str(course.get("category", ""))
+                if course_id in selected_course_ids:
+                    continue
                 if course_code in selected_codes:
                     continue
                 if selected_slots & course_slots:
                     continue
                 if selected_credits + credit > credit_cap:
                     continue
+                selected_course_ids.add(course_id)
                 selected_codes.add(course_code)
                 selected_slots.update(course_slots)
                 selected_categories[category] += 1
                 selected_count += 1
                 selected_credits += credit
-                demand[str(edge["course_id"])] += 1
+                demand[course_id] += 1
                 if selected_count >= 5:
                     break
         wishlist_sizes.append(selected_count)
@@ -428,6 +457,7 @@ def audit_rows(
             f"{len(common_required_codes)} > 4 ({sorted(common_required_codes)})"
         )
     is_main_competitive_medium = len(students) == 100 and len(courses) == 80
+    is_behavioral_large = len(students) == 300 and len(courses) == 120
     if len(courses) >= 80:
         for profile_id in sorted(profile_ids):
             required_count = len(required_codes_by_profile[profile_id])
@@ -553,6 +583,49 @@ def audit_rows(
             errors.append(f"LabSeminar predicted demand share is too weak: {lab_share:.4f}")
         if lab_share > 0.13:
             errors.append(f"LabSeminar predicted demand share is too strong: {lab_share:.4f}")
+    elif is_behavioral_large:
+        if competition_pressure["predicted_overloaded_section_count"] < 14:
+            errors.append(
+                "behavioral_large competition pressure too weak: expected at least 14 predicted overloaded sections, got "
+                f"{competition_pressure['predicted_overloaded_section_count']}"
+            )
+        if (
+            competition_pressure["predicted_overloaded_section_count"]
+            + competition_pressure["predicted_near_full_section_count"]
+            < 20
+        ):
+            errors.append(
+                "behavioral_large competition pressure too weak: expected at least 20 overloaded or near-full sections, got "
+                f"{competition_pressure['predicted_overloaded_section_count'] + competition_pressure['predicted_near_full_section_count']}"
+            )
+        if competition_pressure["high_pressure_required_overloaded_section_count"] < 5:
+            errors.append(
+                "behavioral_large high-pressure required competition too weak: expected at least 5 overloaded required sections, got "
+                f"{competition_pressure['high_pressure_required_overloaded_section_count']}"
+            )
+        admission_proxy = float(competition_pressure["predicted_admission_rate_proxy"])
+        if not 0.65 <= admission_proxy <= 0.88:
+            errors.append(
+                "behavioral_large admission proxy should be in 0.65-0.88, got "
+                f"{admission_proxy:.4f}"
+            )
+        demand_share = competition_pressure["predicted_demand_share_by_category"]
+        foundation_share = float(demand_share.get("Foundation", 0.0))
+        major_share = float(demand_share.get("MajorCore", 0.0)) + float(demand_share.get("MajorElective", 0.0))
+        pe_share = float(demand_share.get("PE", 0.0))
+        lab_share = float(demand_share.get("LabSeminar", 0.0))
+        if foundation_share > 0.55:
+            errors.append(f"Foundation predicted demand share is too dominant for behavioral_large: {foundation_share:.4f}")
+        if major_share < 0.35:
+            errors.append(f"MajorCore + MajorElective predicted demand share is too weak for behavioral_large: {major_share:.4f}")
+        if pe_share <= 0.0:
+            errors.append("PE predicted demand share must be nonzero for behavioral_large")
+        if lab_share <= 0.0:
+            errors.append("LabSeminar predicted demand share must be nonzero for behavioral_large")
+        if pe_share > 0.12:
+            errors.append(f"PE predicted demand share is too strong for behavioral_large: {pe_share:.4f}")
+        if lab_share > 0.13:
+            errors.append(f"LabSeminar predicted demand share is too strong for behavioral_large: {lab_share:.4f}")
     elif len(students) >= 80 and len(courses) >= 80:
         if competition_pressure["predicted_overloaded_section_count"] < 8:
             errors.append(

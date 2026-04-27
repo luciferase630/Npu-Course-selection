@@ -118,6 +118,8 @@ def build_shape(
 ) -> GenerationShape:
     if preset == "medium":
         return GenerationShape("medium", 100, 80, 4, 51)
+    if preset == "behavioral_large":
+        return GenerationShape("behavioral_large", 300, 120, 4, 77)
     if preset in {"catalog_stress", "legacy_40x200"}:
         return GenerationShape("catalog_stress", 40, 200, 4, 128)
     if preset != "custom":
@@ -599,6 +601,33 @@ def generate_course_sections(
                 }
                 low, high = capacity_ranges[spec.category]
                 capacity = rng.randint(min(low, high), max(low, high))
+            elif n_students >= 200 and n_course_sections <= 140:
+                if spec.course_code in {"FND001", "ENG001", "MCO001"}:
+                    low, high = (50, 85)
+                elif spec.category == "Foundation":
+                    low, high = (42, 70)
+                elif spec.category == "English":
+                    low, high = (42, 70)
+                elif spec.category == "MajorCore" and len(spec.profile_tags) == 1:
+                    low, high = (28, 48)
+                elif spec.category == "MajorCore":
+                    low, high = (35, 60)
+                else:
+                    ranges = {
+                        "MajorElective": (18, 34),
+                        "GeneralElective": (34, 60),
+                        "PE": (18, 32),
+                        "LabSeminar": (14, 28),
+                    }
+                    low, high = ranges[spec.category]
+                popularity = teacher_quality[teacher_id] + course_quality[spec.course_code]
+                if popularity >= 15:
+                    high -= 4
+                    low -= 3
+                elif popularity <= -12:
+                    low += 3
+                    high += 7
+                capacity = rng.randint(max(6, low), max(max(6, low), high))
             elif n_students >= 80 and n_course_sections <= 100:
                 if spec.course_code in {"FND001", "ENG001", "MCO001"}:
                     low, high = (24, 42)
@@ -944,6 +973,8 @@ def eligible_count_bounds(course_count: int) -> tuple[int, int]:
         return course_count, course_count
     if course_count >= 150:
         return 80, min(140, course_count)
+    if course_count >= 100:
+        return 60, min(95, course_count)
     return min(45, course_count), min(70, course_count)
 
 
@@ -1411,13 +1442,19 @@ def dataset_sizes(dataset: dict[str, object]) -> tuple[int, int, int, int]:
 def default_output_dir_for_preset(preset: str, seed: int, shape: GenerationShape | None = None) -> Path:
     if preset == "custom" and shape is not None:
         return Path("data/synthetic") / f"n{shape.n_students}_c{shape.n_course_sections}_p{shape.n_profiles}_seed{seed}"
+    if preset == "behavioral_large":
+        return Path("data/synthetic/behavioral_large")
     return Path("data/synthetic")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate synthetic MVP all-pay data.")
     parser.add_argument("--config", default="configs/simple_model.yaml")
-    parser.add_argument("--preset", default="smoke", choices=["smoke", "medium", "catalog_stress", "legacy_40x200", "custom"])
+    parser.add_argument(
+        "--preset",
+        default="smoke",
+        choices=["smoke", "medium", "behavioral_large", "catalog_stress", "legacy_40x200", "custom"],
+    )
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--n-students", type=int, default=None)
@@ -1430,7 +1467,7 @@ def main() -> None:
     shape: GenerationShape | None = None
     if args.preset == "smoke":
         dataset = build_smoke_dataset(seed)
-    elif args.preset in {"medium", "catalog_stress", "legacy_40x200"}:
+    elif args.preset in {"medium", "behavioral_large", "catalog_stress", "legacy_40x200"}:
         shape = build_shape(args.preset)
         dataset = build_synthetic_dataset(seed, shape)
     else:

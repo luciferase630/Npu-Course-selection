@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from src.experiments.run_single_round_mvp import apply_decision, committed_bid_for_student
+from src.experiments.run_single_round_mvp import (
+    apply_decision,
+    build_agent_type_by_student,
+    committed_bid_for_student,
+    validate_formula_runtime_args,
+)
 from src.models import BidState, Course
 from src.student_agents.context import build_state_snapshot
 from src.student_agents.scripted_policies import SUPPORTED_SCRIPTED_POLICIES, run_scripted_policy
@@ -99,6 +104,35 @@ class RuntimeHelperTests(unittest.TestCase):
                 total = sum(item["bid"] for item in bids if item["selected"])
                 self.assertLessEqual(total, 100)
                 self.assertTrue(all(isinstance(item["bid"], int) and item["bid"] >= 0 for item in bids))
+
+    def test_focal_agent_mapping_uses_openai_only_for_focal_student(self) -> None:
+        mapping = build_agent_type_by_student(["S1", "S2", "S3"], set(), "openai", "S2")
+        self.assertEqual(mapping["S1"], "behavioral")
+        self.assertEqual(mapping["S2"], "openai")
+        self.assertEqual(mapping["S3"], "behavioral")
+
+    def test_formula_prompt_requires_focal_tool_based_openai(self) -> None:
+        args = type(
+            "Args",
+            (),
+            {
+                "focal_student_id": None,
+                "formula_prompt": True,
+                "agent": "openai",
+                "experiment_group": "E0_llm_natural_baseline",
+            },
+        )()
+        with self.assertRaises(SystemExit):
+            validate_formula_runtime_args(args, "tool_based", ["S1"])
+
+        args.focal_student_id = "S1"
+        args.agent = "behavioral"
+        with self.assertRaises(SystemExit):
+            validate_formula_runtime_args(args, "tool_based", ["S1"])
+
+        args.agent = "openai"
+        with self.assertRaises(SystemExit):
+            validate_formula_runtime_args(args, "single_shot", ["S1"])
 
 
 if __name__ == "__main__":

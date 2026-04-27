@@ -11,7 +11,11 @@ from src.llm_clients.mock_client import MockLLMClient
 from src.student_agents.tool_env import StudentSession
 from src.student_agents.behavioral import (
     BEHAVIORAL_CATEGORY_LIMITS,
+    PERSONA_MIX,
     BehavioralProfile,
+    behavioral_adjusted_selection_score,
+    behavioral_candidate_passes_threshold,
+    behavioral_spend_ratio,
     behavioral_target_course_count,
     requirement_score,
     sample_behavioral_profile,
@@ -278,6 +282,166 @@ class ToolEnvTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, different)
 
+    def test_behavioral_persona_mix_contains_current_nine_personas(self) -> None:
+        self.assertEqual(
+            set(PERSONA_MIX),
+            {
+                "balanced_student",
+                "conservative_student",
+                "aggressive_student",
+                "novice_student",
+                "procrastinator_student",
+                "perfectionist_student",
+                "pragmatist_student",
+                "explorer_student",
+                "anxious_student",
+            },
+        )
+
+    def test_new_persona_directional_behavior(self) -> None:
+        student = Student("S999", 100, "balanced", 30.0, 1.0, "junior")
+        balanced = BehavioralProfile(
+            persona="balanced_student",
+            overconfidence=0.0,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.0,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.0,
+            category_bias={},
+        )
+        procrastinator = BehavioralProfile(
+            persona="procrastinator_student",
+            overconfidence=0.0,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.0,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.0,
+            late_action_bias=0.70,
+            category_bias={},
+        )
+        perfectionist = BehavioralProfile(
+            persona="perfectionist_student",
+            overconfidence=0.0,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.0,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.0,
+            selectiveness=0.60,
+            category_bias={},
+        )
+        pragmatist = BehavioralProfile(
+            persona="pragmatist_student",
+            overconfidence=0.0,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.8,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.0,
+            credit_focus=0.55,
+            category_bias={},
+        )
+        explorer = BehavioralProfile(
+            persona="explorer_student",
+            overconfidence=0.0,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.0,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.0,
+            diversity_preference=0.60,
+            category_bias={},
+        )
+        anxious = BehavioralProfile(
+            persona="anxious_student",
+            overconfidence=0.0,
+            herding_tendency=0.0,
+            exploration_rate=0.0,
+            inertia=0.0,
+            deadline_focus=0.0,
+            impatience=0.0,
+            budget_conservatism=0.0,
+            attention_limit=40,
+            ex_ante_risk_aversion=0.0,
+            safety_focus=0.70,
+            category_bias={},
+        )
+        self.assertGreater(
+            behavioral_spend_ratio(procrastinator, 3, 3),
+            behavioral_spend_ratio(procrastinator, 1, 3),
+        )
+        self.assertLess(
+            behavioral_target_course_count(student, perfectionist),
+            behavioral_target_course_count(student, balanced),
+        )
+        _low_score, low_credit = score_behavioral_candidate(
+            utility=70,
+            category="MajorCore",
+            requirement=None,
+            derived_penalty=0,
+            crowding=0,
+            previous_selected=False,
+            profile=pragmatist,
+            credit=1.0,
+        )
+        _high_score, high_credit = score_behavioral_candidate(
+            utility=70,
+            category="MajorCore",
+            requirement=None,
+            derived_penalty=0,
+            crowding=0,
+            previous_selected=False,
+            profile=pragmatist,
+            credit=4.0,
+        )
+        self.assertGreater(high_credit["credit_focus"], low_credit["credit_focus"])
+        self.assertGreater(
+            behavioral_adjusted_selection_score(70, "GeneralElective", {"MajorCore": 1}, explorer),
+            behavioral_adjusted_selection_score(70, "MajorCore", {"MajorCore": 1}, explorer),
+        )
+        _safe_score, safe_components = score_behavioral_candidate(
+            utility=70,
+            category="MajorCore",
+            requirement=None,
+            derived_penalty=0,
+            crowding=1.0,
+            previous_selected=False,
+            profile=balanced,
+        )
+        _anxious_score, anxious_components = score_behavioral_candidate(
+            utility=70,
+            category="MajorCore",
+            requirement=None,
+            derived_penalty=0,
+            crowding=1.0,
+            previous_selected=False,
+            profile=anxious,
+        )
+        self.assertLess(anxious_components["crowding"], safe_components["crowding"])
+        self.assertFalse(
+            behavioral_candidate_passes_threshold(
+                {"utility": 70.0, "perceived_crowding": 0.95},
+                anxious,
+            )
+        )
+
     def test_requirement_score_actual_boost_order_matches_policy(self) -> None:
         session = make_session()
         profile = sample_behavioral_profile(session.student, 123)
@@ -354,7 +518,12 @@ class ToolEnvTests(unittest.TestCase):
         context = result["behavioral_decision_context"]
         self.assertEqual(
             context["target_count"],
-            behavioral_target_course_count(session.student, sample_behavioral_profile(session.student, 123)),
+            behavioral_target_course_count(
+                session.student,
+                sample_behavioral_profile(session.student, 123),
+                session.time_point,
+                session.time_points_total,
+            ),
         )
         self.assertLessEqual(len(context["selected_courses"]), context["target_count"])
         self.assertGreater(len(context["selected_courses"]), 0)

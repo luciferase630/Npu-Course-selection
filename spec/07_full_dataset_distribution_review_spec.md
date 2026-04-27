@@ -5,11 +5,14 @@
 本节覆盖本文中较早的 `40×200` 和 `eligible=all` 审阅口径。
 
 - 默认审阅对象 `medium` 改为 `100 students × 80 course sections × 4 profiles`。
+- Behavioral scale 审阅对象新增 `behavioral_large = 300 students × 120 course sections × 4 profiles`，仍使用 `3` 个轮内 time points 做本地 behavioral 验证。
 - `student_course_utility_edges.csv` 仍必须是完整边表，但 `eligible=false` 是允许且必要的行政资格信号。
 - `medium` 每个学生 eligible 数量目标为 `45-70 / 80`；每条 student requirement 必须能找到至少一个 eligible section。
+- `behavioral_large` 每个学生 eligible 数量目标为 `60-95 / 120`；每条 student requirement 必须能找到至少一个 eligible section。
 - 审计不使用“总容量 / 总学生数”判断竞争强度。竞争应来自热门必修、好老师、高 utility 和关键课程的局部超载，而不是每门课平均满员。
 - `audit_synthetic_dataset.py` 必须用 behavioral agent 同源评分输出 `competition_pressure`：预测 demand/capacity、超载 section 数、近满 section 数、空 section 数、高压力 required 超载情况、category demand share、persona demand share、p90/max competition ratio 和 predicted admission proxy。
 - `medium` 通过门槛：`predicted_overloaded_section_count >= 8`，且 `predicted_overloaded_section_count + predicted_near_full_section_count >= 12`；高压力 required 中至少若干 section 超载，`predicted_admission_rate_proxy` 约 `0.75-0.92`，且 Foundation demand 不能垄断。冷门选修空课只记录，不作为失败。
+- `behavioral_large` 通过门槛：`predicted_overloaded_section_count >= 14`，且 `predicted_overloaded_section_count + predicted_near_full_section_count >= 20`；高压力 required 至少 5 个 section 超载，`predicted_admission_rate_proxy` 约 `0.65-0.88`，Foundation 不能垄断，MajorCore+MajorElective 应保持主体，PE/LabSeminar 必须非零但不能主导。
 - `custom` scale sanity（例如 `300×120×1`）使用较宽阈值，只确认生成器、audit 与 runtime 可扩展；PE 等类别分布异常可先作为 warning，不阻塞主实验数据集。
 - 午饭时段 `5-6` 继续严格低频：目标 `<=3%`，硬上限 `<=4%`。
 
@@ -186,6 +189,12 @@ profile 作用检查：
 
 ```powershell
 python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic
+```
+
+生成 `behavioral_large` 后应运行：
+
+```powershell
+python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic/behavioral_large
 ```
 
 审计必须输出行数、午饭时段占比、按 weekday 分布、高压力 required 数量/学分、utility 分布和教师一致性。若审计 `passed=false`，不应继续消耗在线 LLM token 跑完整全量实验。

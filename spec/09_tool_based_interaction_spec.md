@@ -69,8 +69,10 @@
 ## 8. Behavioral agent baseline
 
 - `behavioral` is the official local non-LLM baseline; `mock` is only a legacy CLI alias and should resolve to effective agent `behavioral`.
-- Current implemented personas are `balanced_student`, `conservative_student`, `aggressive_student`, and `novice_student`.
-- Current implemented behavior parameters cover overconfidence, herding/avoidance, exploration, positive inertia for currently selected courses, deadline focus, impatience, budget conservatism, finite attention, category bias, and ex-ante risk aversion.
+- Current implemented personas are `balanced_student`, `conservative_student`, `aggressive_student`, `novice_student`, `procrastinator_student`, `perfectionist_student`, `pragmatist_student`, `explorer_student`, and `anxious_student`.
+- Current implemented behavior parameters cover overconfidence, herding/avoidance, exploration, positive inertia for currently selected courses, deadline focus, impatience, budget conservatism, finite attention, category bias, ex-ante risk aversion, selectiveness, credit focus, diversity preference, late action bias, and safety focus.
+- The five expanded personas are still single-round ex-ante behaviors. `procrastinator_student` changes urgency and spend ratio across the three in-round time points, but it does not learn from admission/rejection outcomes.
 - The single-round all-pay MVP does not model post-allocation learning. Rejection-driven loss aversion or negative inertia must wait for a true multi-round design with observed admission feedback.
-- Proposed future personas are not implemented in this baseline: social, procrastinator, perfectionist, pragmatist, explorer, GPA-oriented, and anxious. Social and GPA-oriented require additional observable inputs such as friend choices or teacher grading signals.
+- `gpa_oriented_student` is intentionally out of scope for this baseline because it requires teacher grading quality, historical grade distributions, or student GPA history. Do not approximate it with `utility` or `credit_focus`; `pragmatist_student` already covers the current practical/credit-oriented behavior.
+- `social_student` and friend-network effects are intentionally on hold because they require a student-student graph and observed friend-choice signals, and would introduce strategic peer-interaction dynamics beyond the current independent single-round all-pay model.
 - Behavioral audit and runtime must share the same scoring helpers and category limits so audit pressure predictions remain comparable with actual behavioral runs.

@@ -10,6 +10,7 @@ from src.data_generation.generate_synthetic_mvp import (
     WEEKDAYS,
     build_custom_dataset,
     build_medium_dataset,
+    build_synthetic_dataset,
     default_output_dir_for_preset,
     build_shape,
     write_dataset,
@@ -306,6 +307,43 @@ class MediumDatasetGenerationTests(unittest.TestCase):
             default_output_dir_for_preset("custom", 42, shape),
             Path("data/synthetic/n10_c20_p3_seed42"),
         )
+        self.assertEqual(
+            default_output_dir_for_preset("behavioral_large", 20260427, build_shape("behavioral_large")),
+            Path("data/synthetic/behavioral_large"),
+        )
+
+    def test_behavioral_large_shape_and_audit(self) -> None:
+        for seed in (20260427, 42):
+            dataset = build_synthetic_dataset(seed, build_shape("behavioral_large"))
+            self.assertEqual(len(dataset["students"]), 300)
+            self.assertEqual(len(dataset["courses"]), 120)
+            self.assertEqual(len(dataset["utilities"]), 36000)
+            self.assertEqual(dataset["metadata"]["preset"], "behavioral_large")
+            result = audit_rows(
+                dataset["students"],
+                dataset["profiles"],
+                dataset["profile_requirements"],
+                dataset["courses"],
+                dataset["requirements"],
+                dataset["utilities"],
+            )
+            self.assertTrue(result["passed"], result["errors"])
+            pressure = result["summary"]["competition_pressure"]
+            self.assertGreaterEqual(pressure["predicted_overloaded_section_count"], 14)
+            self.assertGreaterEqual(
+                pressure["predicted_overloaded_section_count"] + pressure["predicted_near_full_section_count"],
+                20,
+            )
+            self.assertGreaterEqual(pressure["predicted_admission_rate_proxy"], 0.65)
+            self.assertLessEqual(pressure["predicted_admission_rate_proxy"], 0.88)
+            demand_share = pressure["predicted_demand_share_by_category"]
+            self.assertLessEqual(demand_share.get("Foundation", 0.0), 0.55)
+            self.assertGreaterEqual(
+                demand_share.get("MajorCore", 0.0) + demand_share.get("MajorElective", 0.0),
+                0.35,
+            )
+            self.assertGreater(demand_share.get("PE", 0.0), 0.0)
+            self.assertGreater(demand_share.get("LabSeminar", 0.0), 0.0)
 
     def test_custom_dataset_seed_behavior(self) -> None:
         first = build_custom_dataset(42, n_students=10, n_course_sections=20, n_profiles=3)

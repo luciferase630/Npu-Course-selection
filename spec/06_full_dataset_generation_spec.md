@@ -5,11 +5,12 @@
 本节覆盖本文中较早的 `medium v1` 规模和 eligible 全开放表述。
 
 - 主实验 `medium` 数据集改为 `100 students × 80 course sections × 4 profiles`。
+- Behavioral scale 验证数据集新增 `behavioral_large = 300 students × 120 course sections × 4 profiles`，用于本地非 LLM persona 和竞争压力扩展验证。
 - 主实验轮内动态改为 `3` 个时间点；旧的 `40×200×5` 只保留为技术稳定性证据，不再作为主竞争实验口径。
 - 旧 `40 students × 200 course sections` 形状保留为 `catalog_stress` / `legacy_40x200` preset，只用于大目录和上下文压力测试。
 - `student_course_utility_edges.csv` 仍输出完整边表，行数为 `n_students × n_course_sections`；但竞争性 `medium` 不再要求所有边 `eligible=true`。
 - `eligible` 表示宽松行政申请资格。基础课、英语、体育、通识课基本开放；高阶专业核心、专业选修、实验/研讨课可按年级、培养方案相关性和行政合理性设置 `eligible=false`。
-- 每个学生在 `medium` 中的 eligible 目标约为 `45-70 / 80`；每个 required `course_code` 必须至少有一个 eligible section。
+- 每个学生在 `medium` 中的 eligible 目标约为 `45-70 / 80`；`behavioral_large` 目标约为 `60-95 / 120`；每个 required `course_code` 必须至少有一个 eligible section。
 - profile 不应作为“只能选本专业课”的硬墙。跨专业申请仍应存在，专业差异主要通过 `utility` 和 `student_course_code_requirements.csv` 的必修压力体现。
 - capacity 按预期需求热点缩放：热门必修、核心课、高 utility 和好老师 section 应自然超载；冷门选修和弱吸引力 section 可以空。
 - 生成后必须运行 `python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic`，并通过 `competition_pressure` 审计门槛。
@@ -24,6 +25,7 @@
 
 - `smoke`：最小内置冒烟数据，用于机制检查。
 - `medium`：主竞争实验数据集，默认 `100学生 × 80教学班 × 4培养方案`。
+- `behavioral_large`：本地 behavioral 扩展验证数据集，默认 `300学生 × 120教学班 × 4培养方案`。
 - `catalog_stress` / `legacy_40x200`：旧 `40学生 × 200教学班 × 4培养方案`，仅用于大目录和上下文压力测试。
 - `custom`：参数化数据集，用于在线 LLM 小规模测试，例如 `10学生 × 20教学班 × 3培养方案`。
 
@@ -34,6 +36,14 @@
 - 课程代码数：约 `45-55`
 - 培养方案数：`3-5` 个，第一版默认 `CS_2026`、`SE_2026`、`AI_2026`、`MATH_2026`
 - 随机种子：必须可配置，默认沿用 `configs/simple_model.yaml` 中的 `random_seed`
+
+`behavioral_large` 默认生成规模：
+
+- 学生数：`n_students=300`
+- 教学班数：`n_course_sections=120`
+- 课程代码数：约 `77`
+- 培养方案数：默认 `4`
+- 轮内时间点：实验运行显式使用 `--time-points 3`
 
 `custom` 必须支持以下参数：
 
@@ -342,6 +352,18 @@ utility = clamp(
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset medium
+```
+
+生成 behavioral large 数据：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset behavioral_large
+```
+
+该 preset 默认输出到：
+
+```text
+data/synthetic/behavioral_large
 ```
 
 可选支持自定义输出目录：

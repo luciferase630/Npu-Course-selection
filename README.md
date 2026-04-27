@@ -110,6 +110,19 @@ python -m src.experiments.run_single_round_mvp --config configs/simple_model.yam
 python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id n10_c20_tool_behavioral --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/n10_c20_p3_seed42 --interaction-mode tool_based
 ```
 
+生成并审计 300×120 behavioral large 数据：
+
+```powershell
+python -m src.data_generation.generate_synthetic_mvp --config configs/simple_model.yaml --preset behavioral_large
+python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic/behavioral_large
+```
+
+运行 300×120×3 behavioral tool-based 验证：
+
+```powershell
+python -m src.experiments.run_single_round_mvp --config configs/simple_model.yaml --run-id behavioral_large_300x120x3_persona_v2 --agent behavioral --experiment-group E0_llm_natural_baseline --data-dir data/synthetic/behavioral_large --interaction-mode tool_based --time-points 3
+```
+
 运行带单个脚本策略学生的对照实验：
 
 ```powershell
