@@ -56,8 +56,11 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         for requirement in profile_requirements:
             if requirement["requirement_type"] == "required":
                 required_by_profile[requirement["profile_id"]].add(requirement["course_code"])
-        self.assertTrue(all(len(required_codes) >= 3 for required_codes in required_by_profile.values()))
+        self.assertTrue(all(9 <= len(required_codes) <= 10 for required_codes in required_by_profile.values()))
         self.assertGreater(len({tuple(sorted(required_codes)) for required_codes in required_by_profile.values()}), 1)
+        common_required = set.intersection(*required_by_profile.values())
+        self.assertLessEqual(len(common_required), 4)
+        self.assertEqual(common_required, {"FND001", "ENG001", "MCO001"})
 
     def test_student_requirements_are_derived_from_profiles(self) -> None:
         profile_lookup = {
@@ -229,6 +232,14 @@ class MediumDatasetGenerationTests(unittest.TestCase):
         self.assertGreaterEqual(pressure["high_pressure_required_overloaded_section_count"], 3)
         self.assertGreaterEqual(pressure["predicted_admission_rate_proxy"], 0.75)
         self.assertLessEqual(pressure["predicted_admission_rate_proxy"], 0.92)
+        demand_share = pressure["predicted_demand_share_by_category"]
+        self.assertLessEqual(demand_share.get("Foundation", 0.0), 0.60)
+        self.assertGreaterEqual(
+            demand_share.get("MajorCore", 0.0) + demand_share.get("MajorElective", 0.0),
+            0.25,
+        )
+        self.assertIn("MajorCore", pressure["top_overloaded_sections_by_category"])
+        self.assertLessEqual(result["summary"]["requirements"]["profile_required_overlap"]["common_required_count"], 4)
 
     def test_student_source_can_be_configured_for_custom_output_dir(self) -> None:
         paths = resolve_data_paths(

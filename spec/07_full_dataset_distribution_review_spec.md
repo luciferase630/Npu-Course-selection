@@ -8,8 +8,8 @@
 - `student_course_utility_edges.csv` 仍必须是完整边表，但 `eligible=false` 是允许且必要的行政资格信号。
 - `medium` 每个学生 eligible 数量目标为 `45-70 / 80`；每条 student requirement 必须能找到至少一个 eligible section。
 - 审计不使用“总容量 / 总学生数”判断竞争强度。竞争应来自热门必修、好老师、高 utility 和关键课程的局部超载，而不是每门课平均满员。
-- `audit_synthetic_dataset.py` 必须输出 `competition_pressure`：预测 demand/capacity、超载 section 数、近满 section 数、空 section 数、高压力 required 超载情况、p90/max competition ratio 和 predicted admission proxy。
-- `medium` 通过门槛：`predicted_overloaded_section_count >= 10`，高压力 required 中至少若干 section 超载，`predicted_admission_rate_proxy` 约 `0.75-0.90`。冷门选修空课只记录，不作为失败。
+- `audit_synthetic_dataset.py` 必须输出 `competition_pressure`：预测 demand/capacity、超载 section 数、近满 section 数、空 section 数、高压力 required 超载情况、category demand share、p90/max competition ratio 和 predicted admission proxy。
+- `medium` 通过门槛：`predicted_overloaded_section_count >= 10`，高压力 required 中至少若干 section 超载，`predicted_admission_rate_proxy` 约 `0.75-0.90`，且 Foundation demand 不能垄断。冷门选修空课只记录，不作为失败。
 - 午饭时段 `5-6` 继续严格低频：目标 `<=3%`，硬上限 `<=4%`。
 
 本文定义合成数据集生成后的审阅标准。它用于检查数据是否足够真实、是否符合建模口径、是否会因为生成偏差污染实验结论。默认审阅对象是 `medium`，同一组结构性检查也适用于 `custom` 小规模数据集。
@@ -45,21 +45,21 @@
 
 默认 `medium` 目标：
 
-- 学生数：`40`
-- 教学班数：`200`
-- 课程代码数：`110-140`
-- 培养方案数：`3-5`
+- 学生数：`100`
+- 教学班数：`80`
+- 课程代码数：`45-55`
+- 培养方案数：`4`
 
 `custom` 目标由命令行参数决定。例如 `--n-students 10 --n-course-sections 20 --n-profiles 3` 时，审阅目标就是 `10` 名学生、`20` 个教学班、`3` 个培养方案。
 
 验收标准：
 
-- `medium` 教学班数必须严格等于 `200`，除非 review 时明确说明原因。
-- `medium` 课程代码数必须落在 `110-140`。
+- `medium` 教学班数必须严格等于 `80`，除非 review 时明确说明原因。
+- `medium` 课程代码数必须落在 `45-55`。
 - `custom` 学生数、教学班数和 profile 数必须严格等于命令行参数；课程代码数由生成器派生，但不能小于满足所有 profile requirements 的最小课程代码数。
 - 每个 `course_code` 至少对应 1 个教学班。
 - 应存在一批多教学班课程代码。
-- 每个 profile 至少关联 3 个 `required` course_code。
+- 每个 profile 约关联 `9-10` 个多年培养方案 `required` course_code。
 
 ## 3. Profile 与 Requirements 检查
 
@@ -75,6 +75,7 @@ requirements 派生正确性：
 - `student_course_code_requirements.csv` 中每一行，必须能通过该学生的 `profile_id` 在 `profile_requirements.csv` 中找到对应的 `(profile_id, course_code, requirement_type, deadline_term)`。
 - `profile_requirements.csv` 的 required 集合表示多年培养方案事实；`student_course_code_requirements.csv.requirement_priority` 可以根据学生 `grade_stage` 和 `deadline_term` 动态派生。
 - 不同 profile 的 required course_code 集合应有可辨识差异，不能所有 profile 完全一样。
+- 全部 profile 共同 required course_code 应控制在 `3-4` 门左右。当前 medium 目标为 `FND001`、`ENG001`、`MCO001` 三门共同 required，其余 required 应按 profile 分化。
 - `student_course_code_requirements.csv` 不应包含手填惩罚数值字段，例如 `missing_required_penalty`。
 
 required 可满足性：

@@ -5,6 +5,14 @@ import json
 from src.student_agents.context import split_time_slots
 
 
+def _mock_target_course_count(credit_cap: float, risk_type: str) -> int:
+    if credit_cap < 22:
+        return 5
+    if risk_type == "conservative":
+        return 5
+    return 6
+
+
 class MockLLMClient:
     """Deterministic local stand-in for a student LLM."""
 
@@ -25,9 +33,9 @@ class MockLLMClient:
         for course in private["available_course_sections"]:
             current = course_states[course["course_id"]]
             crowding = current["observed_waitlist_count"] / max(1, int(course["capacity"]))
-            requirement_boost = requirement_penalties.get(course["course_code"], 0) * 0.18
+            requirement_boost = requirement_penalties.get(course["course_code"], 0) * 0.10
             risk_discount = 1.0 if private["risk_type"] == "aggressive" else 0.82 if private["risk_type"] == "balanced" else 0.66
-            score = float(course["utility"]) + requirement_boost - crowding * 8
+            score = float(course["utility"]) + requirement_boost - crowding * 6
             candidates.append((score * risk_discount, course, current, crowding))
         candidates.sort(key=lambda item: item[0], reverse=True)
 
@@ -35,6 +43,7 @@ class MockLLMClient:
         selected_time_slots: set[str] = set()
         selected_credits = 0.0
         credit_cap = float(private.get("credit_cap", 30))
+        target_count = _mock_target_course_count(credit_cap, str(private.get("risk_type", "balanced")))
         total_bid = 0
         bids = []
         for rank, (score, course, current, crowding) in enumerate(candidates):
@@ -42,8 +51,9 @@ class MockLLMClient:
             no_time_conflict = not (selected_time_slots & course_slots)
             within_credit_cap = selected_credits + float(course["credit"]) <= credit_cap
             wants_course = (
-                rank < 4
-                and score > 18
+                rank < target_count + 8
+                and len(selected_by_code) < target_count
+                and score > 10
                 and course["course_code"] not in selected_by_code
                 and no_time_conflict
                 and within_credit_cap
@@ -129,10 +139,14 @@ class MockLLMClient:
         )
         top_courses = call(
             "search_courses",
-            {"sort_by": "utility", "max_results": 20},
+            {"sort_by": "utility", "max_results": 35},
             "Browse high-utility sections to fill remaining feasible schedule space.",
         )
 
+        requirement_penalties = {
+            requirement.course_code: float(session.derived_penalties.get((session.student.student_id, requirement.course_code), 0.0))
+            for requirement in session.requirements
+        }
         candidate_ids = []
         for requirement in required.get("requirements", []):
             for section in requirement.get("sections", []):
@@ -140,16 +154,50 @@ class MockLLMClient:
         for course in top_courses.get("courses", []):
             candidate_ids.append(course["course_id"])
 
-        selected: list[str] = []
+        scored_candidates = []
+        seen_candidates = set()
         for course_id in candidate_ids:
-            if course_id in selected:
+            if course_id in seen_candidates or course_id not in session.available_course_ids:
                 continue
-            proposal = selected + [course_id]
-            check = session.call_tool("check_schedule", {"proposed_course_ids": proposal})
-            if check.get("feasible"):
-                selected = proposal
-            if len(selected) >= 4:
+            seen_candidates.add(course_id)
+            course = session.courses[course_id]
+            edge = session.edges[(session.student.student_id, course_id)]
+            crowding = session.current_waitlist_counts.get(course_id, 0) / max(1, int(course.capacity))
+            requirement_boost = requirement_penalties.get(course.course_code, 0.0) * 0.10
+            score = float(edge.utility) + requirement_boost - crowding * 6
+            scored_candidates.append((score, course_id))
+        scored_candidates.sort(key=lambda item: item[0], reverse=True)
+
+        target_count = _mock_target_course_count(float(session.student.credit_cap), session.student.risk_type)
+        soft_category_limits = {"Foundation": 2, "English": 1, "PE": 1}
+        selected: list[str] = []
+        selected_category_counts: dict[str, int] = {}
+        for _pass_index in range(2):
+            for _score, course_id in scored_candidates:
+                if course_id in selected:
+                    continue
+                course = session.courses[course_id]
+                if _pass_index == 0 and selected_category_counts.get(course.category, 0) >= soft_category_limits.get(course.category, target_count):
+                    continue
+                proposal = selected + [course_id]
+                check = session.call_tool("check_schedule", {"proposed_course_ids": proposal})
+                if check.get("feasible"):
+                    selected = proposal
+                    selected_category_counts[course.category] = selected_category_counts.get(course.category, 0) + 1
+                if len(selected) >= target_count:
+                    break
+            if len(selected) >= target_count:
                 break
+        if len(selected) < 5:
+            for _score, course_id in scored_candidates:
+                if course_id in selected:
+                    continue
+                proposal = selected + [course_id]
+                check = session.call_tool("check_schedule", {"proposed_course_ids": proposal})
+                if check.get("feasible"):
+                    selected = proposal
+                if len(selected) >= 5:
+                    break
 
         if not selected:
             submit = call(

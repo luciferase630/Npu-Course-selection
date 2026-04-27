@@ -172,6 +172,18 @@ def build_competition_pressure_summary(
     empty = [row for row in section_rows if row["predicted_demand"] == 0]
     high_pressure_overloaded = [row for row in overloaded if row["is_high_pressure_required"]]
     high_pressure_overloaded_codes = sorted({str(row["course_code"]) for row in high_pressure_overloaded})
+    demand_by_category: Counter[str] = Counter()
+    section_count_by_category: Counter[str] = Counter()
+    overloaded_by_category: Counter[str] = Counter()
+    empty_by_category: Counter[str] = Counter()
+    for row in section_rows:
+        category = str(row["category"])
+        section_count_by_category[category] += 1
+        demand_by_category[category] += int(row["predicted_demand"])
+        if int(row["predicted_demand"]) > int(row["capacity"]):
+            overloaded_by_category[category] += 1
+        if int(row["predicted_demand"]) == 0:
+            empty_by_category[category] += 1
     section_rows.sort(
         key=lambda row: (
             -float(row["predicted_competition_ratio"]),
@@ -179,6 +191,13 @@ def build_competition_pressure_summary(
             str(row["course_id"]),
         )
     )
+    top_overloaded_by_category: dict[str, list[dict]] = defaultdict(list)
+    for row in section_rows:
+        if int(row["predicted_demand"]) <= int(row["capacity"]):
+            continue
+        bucket = top_overloaded_by_category[str(row["category"])]
+        if len(bucket) < 5:
+            bucket.append(row)
 
     eligible_values = [eligible_counts[str(student["student_id"])] for student in students]
     return {
@@ -193,6 +212,14 @@ def build_competition_pressure_summary(
         "predicted_overloaded_section_count": len(overloaded),
         "predicted_near_full_section_count": len(near_full),
         "predicted_empty_section_count": len(empty),
+        "predicted_demand_by_category": dict(sorted(demand_by_category.items())),
+        "predicted_demand_share_by_category": {
+            category: round(count / total_demand, 4) if total_demand else 0.0
+            for category, count in sorted(demand_by_category.items())
+        },
+        "section_count_by_category": dict(sorted(section_count_by_category.items())),
+        "overloaded_section_count_by_category": dict(sorted(overloaded_by_category.items())),
+        "empty_section_count_by_category": dict(sorted(empty_by_category.items())),
         "high_pressure_required_overloaded_section_count": len(high_pressure_overloaded),
         "high_pressure_required_overloaded_course_codes": high_pressure_overloaded_codes,
         "predicted_admission_rate_proxy": round(admitted_proxy / total_demand, 4) if total_demand else 0.0,
@@ -200,6 +227,7 @@ def build_competition_pressure_summary(
         "competition_ratio_p90": round(_percentile(ratios, 0.90), 4),
         "competition_ratio_max": round(max(ratios), 4) if ratios else 0.0,
         "top_overloaded_sections": section_rows[:12],
+        "top_overloaded_sections_by_category": dict(sorted(top_overloaded_by_category.items())),
         "empty_section_examples": empty[:12],
     }
 
@@ -277,15 +305,34 @@ def audit_rows(
 
     profile_requirement_counts: dict[str, Counter[str]] = defaultdict(Counter)
     required_deadlines: dict[str, Counter[str]] = defaultdict(Counter)
+    required_codes_by_profile: dict[str, set[str]] = defaultdict(set)
     for requirement in profile_requirements:
         profile_id = str(requirement.get("profile_id", ""))
         profile_requirement_counts[profile_id][str(requirement.get("requirement_type", ""))] += 1
         if str(requirement.get("requirement_type")) == "required":
             required_deadlines[profile_id][str(requirement.get("deadline_term", ""))] += 1
+            required_codes_by_profile[profile_id].add(str(requirement.get("course_code", "")))
         if profile_id not in profile_ids:
             errors.append(f"profile_requirements references unknown profile {profile_id}")
         if str(requirement.get("course_code", "")) not in courses_by_code:
             errors.append(f"profile_requirements references unknown course_code {requirement.get('course_code')}")
+    common_required_codes = (
+        set.intersection(*(required_codes_by_profile[profile_id] for profile_id in profile_ids))
+        if profile_ids and all(profile_id in required_codes_by_profile for profile_id in profile_ids)
+        else set()
+    )
+    required_overlap_pairs = {}
+    for left in sorted(profile_ids):
+        for right in sorted(profile_ids):
+            if left >= right:
+                continue
+            overlap = required_codes_by_profile[left] & required_codes_by_profile[right]
+            required_overlap_pairs[f"{left}|{right}"] = len(overlap)
+    if len(courses) >= 80 and len(common_required_codes) > 4:
+        errors.append(
+            "too many required course_codes are shared by every profile: "
+            f"{len(common_required_codes)} > 4 ({sorted(common_required_codes)})"
+        )
 
     high_pressure_by_student: dict[str, list[str]] = defaultdict(list)
     high_pressure_credit_by_student: dict[str, float] = defaultdict(float)
@@ -374,6 +421,13 @@ def audit_rows(
                 "predicted admission rate proxy should be in 0.75-0.92 for the competitive medium dataset, got "
                 f"{admission_proxy:.4f}"
             )
+        demand_share = competition_pressure["predicted_demand_share_by_category"]
+        foundation_share = float(demand_share.get("Foundation", 0.0))
+        major_share = float(demand_share.get("MajorCore", 0.0)) + float(demand_share.get("MajorElective", 0.0))
+        if foundation_share > 0.60:
+            errors.append(f"Foundation predicted demand share is too dominant: {foundation_share:.4f}")
+        if major_share < 0.25:
+            errors.append(f"MajorCore + MajorElective predicted demand share is too weak: {major_share:.4f}")
 
     high_pressure_counts = [len(high_pressure_by_student[str(student["student_id"])]) for student in students]
     high_pressure_credits = [high_pressure_credit_by_student[str(student["student_id"])] for student in students]
@@ -403,6 +457,11 @@ def audit_rows(
             "requirements": {
                 "profile_requirement_counts": {profile: dict(counter) for profile, counter in sorted(profile_requirement_counts.items())},
                 "required_deadlines": {profile: dict(counter) for profile, counter in sorted(required_deadlines.items())},
+                "profile_required_overlap": {
+                    "common_required_count": len(common_required_codes),
+                    "common_required_course_codes": sorted(common_required_codes),
+                    "pairwise_required_overlap_counts": required_overlap_pairs,
+                },
                 "high_pressure_required_count_min": min(high_pressure_counts) if high_pressure_counts else 0,
                 "high_pressure_required_count_max": max(high_pressure_counts) if high_pressure_counts else 0,
                 "high_pressure_required_credit_min": round(min(high_pressure_credits), 4) if high_pressure_credits else 0.0,

@@ -121,9 +121,9 @@ SE_2026,MCO008,required,normal,junior
 
 生成规则：
 
-- 不同 profile 必须共享部分基础课，例如微积分、线性代数、大学物理、英语等。
+- 不同 profile 只共享少量全校共同必修；当前 medium 目标为 `FND001`、`ENG001`、`MCO001` 三门共同 required。
 - 不同 profile 必须有各自的专业核心课，不能所有 profile 的 required 集合完全一样。
-- 每个 profile 的 `required` course_code 数量建议为 `8-12` 门；它表示多年培养方案必修集合，不表示本轮必须全部修完。
+- 每个 profile 的 `required` course_code 数量建议为 `9-10` 门；它表示多年培养方案必修集合，不表示本轮必须全部修完。
 - 可以为每个 profile 生成少量 `strong_elective_requirement` 和 `optional_target`。
 - `deadline_term` 必须按 `freshman`、`sophomore`、`junior`、`senior`、`graduation_term` 分层，不能统一填 `current`。
 - 本表不手填未完成惩罚数值；惩罚仍由运行时 `requirement_penalty_model` 派生。
@@ -146,7 +146,7 @@ college,grade
 
 生成规则：
 
-- `student_id` 使用 `S001` 到 `S040`。
+- `student_id` 使用 `S001` 到 `S100`。
 - `budget_initial` 固定为 `100`。
 - `credit_cap` 默认 `30`。
 - `bean_cost_lambda` 默认 `1`，仅表示运行时状态依赖豆子影子价格的基准标尺。
@@ -188,11 +188,11 @@ is_required,release_round
 
 容量规则：
 
-- 大课、基础课：`60-140`，但部分热门基础课可压到 `30-60` 以制造竞争边界。
-- 专业核心课：`40-100`，少量热门核心课可压到 `30-60`。
-- 专业选修课：`25-80`。
-- 通识选修课：`20-100`。
-- 体育、实验、研讨：`15-40`。
+- 全校共同 required：约 `24-42`，并配置 3-4 个 section 分散公共压力。
+- profile-specific Foundation：约 `20-34`。
+- profile-specific MajorCore：约 `14-26`，用于形成专业内部真实竞争。
+- MajorElective：约 `8-18`，允许热门好老师 section 超载、冷门 section 空置。
+- GeneralElective、PE、LabSeminar：约 `5-12`，不强行均衡满员。
 
 ## 6. 排课时间生成
 
@@ -313,19 +313,19 @@ utility = clamp(
 {
   "preset": "medium",
   "seed": 20260425,
-  "n_students": 40,
-  "n_course_sections": 200,
-  "n_course_codes": 128,
+  "n_students": 100,
+  "n_course_sections": 80,
+  "n_course_codes": 51,
   "profile_count": 4,
-  "profile_requirement_count": 64,
+  "profile_requirement_count": 51,
   "profile_requirement_summary": {},
   "time_block_distribution": {},
   "category_distribution": {},
   "credit_summary": {},
   "eligible_count_summary": {
-    "min": 200,
-    "max": 200,
-    "mean": 200
+    "min": 45,
+    "max": 70,
+    "mean": 58
   },
   "utility_summary": {},
   "quality_check_summary": {}

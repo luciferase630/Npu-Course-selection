@@ -551,6 +551,9 @@ def generate_course_sections(
         for spec in code_specs:
             if spec.is_public_required and spec.category in {"Foundation", "English", "MajorCore"}:
                 section_counts[spec.course_code] = 2
+        for code in {"FND001", "ENG001", "MCO001"}:
+            if code in section_counts:
+                section_counts[code] = max(section_counts[code], 3)
     extra_weights = {
         "Foundation": 3.0,
         "MajorCore": 2.5,
@@ -594,20 +597,20 @@ def generate_course_sections(
                 low, high = capacity_ranges[spec.category]
                 capacity = rng.randint(min(low, high), max(low, high))
             elif n_students >= 80 and n_course_sections <= 100:
-                if is_hot_required:
-                    ranges = {
-                        "Foundation": (28, 48),
-                        "MajorCore": (32, 55),
-                        "English": (30, 50),
-                    }
-                    low, high = ranges.get(spec.category, (18, 32))
+                if spec.course_code in {"FND001", "ENG001", "MCO001"}:
+                    low, high = (24, 42)
+                elif spec.category == "Foundation":
+                    low, high = (20, 34)
+                elif spec.category == "English":
+                    low, high = (20, 34)
+                elif spec.category == "MajorCore" and len(spec.profile_tags) == 1:
+                    low, high = (14, 26)
+                elif spec.category == "MajorCore":
+                    low, high = (18, 32)
                 else:
                     ranges = {
-                        "Foundation": (18, 30),
-                        "MajorCore": (16, 30),
-                        "MajorElective": (7, 16),
+                        "MajorElective": (8, 18),
                         "GeneralElective": (5, 12),
-                        "English": (20, 34),
                         "PE": (5, 12),
                         "LabSeminar": (5, 12),
                     }
@@ -656,37 +659,61 @@ def generate_profile_requirements(code_specs: list[CourseCodeSpec], profiles: li
     by_category: dict[str, list[CourseCodeSpec]] = defaultdict(list)
     for spec in code_specs:
         by_category[spec.category].append(spec)
-    common_required = [spec.course_code for spec in by_category["Foundation"][:4]]
-    common_required.append(by_category["English"][0].course_code)
-    common_major = [spec.course_code for spec in by_category["MajorCore"][:2]]
+    common_foundation = [by_category["Foundation"][0].course_code] if by_category["Foundation"] else []
+    common_english = [by_category["English"][0].course_code] if by_category["English"] else []
+    common_major = [by_category["MajorCore"][0].course_code] if by_category["MajorCore"] else []
+    foundation_pool = [spec.course_code for spec in by_category["Foundation"][1:]]
     rows: list[dict] = []
-    for profile_row in profiles:
+    for profile_index, profile_row in enumerate(profiles):
         profile_id = str(profile_row["profile_id"])
-        profile_specific_required = [
+        profile_foundation: list[str] = []
+        if foundation_pool:
+            for offset in range(min(2, len(foundation_pool))):
+                code = foundation_pool[(profile_index * 2 + offset) % len(foundation_pool)]
+                if code not in profile_foundation:
+                    profile_foundation.append(code)
+
+        profile_major_required = [
             spec.course_code
             for spec in by_category["MajorCore"]
             if spec.profile_tags == (profile_id,)
         ][:3]
-        if len(profile_specific_required) < 3:
+        if len(profile_major_required) < 5:
             for spec in by_category["MajorElective"]:
-                if profile_id in spec.profile_tags and spec.course_code not in profile_specific_required:
-                    profile_specific_required.append(spec.course_code)
-                if len(profile_specific_required) >= 3:
+                if profile_id in spec.profile_tags and spec.course_code not in profile_major_required:
+                    profile_major_required.append(spec.course_code)
+                if len(profile_major_required) >= 5:
                     break
-        if len(profile_specific_required) < 3:
-            for spec in by_category["MajorCore"][2:]:
-                if spec.course_code not in profile_specific_required:
-                    profile_specific_required.append(spec.course_code)
-                if len(profile_specific_required) >= 3:
+        if len(profile_major_required) < 5:
+            for spec in by_category["MajorCore"][1:]:
+                if spec.course_code not in common_major and spec.course_code not in profile_major_required:
+                    profile_major_required.append(spec.course_code)
+                if len(profile_major_required) >= 5:
                     break
-        major_required = common_major + profile_specific_required
+
+        required_codes = []
+        for code in [
+            *(common_foundation[:1]),
+            *(profile_foundation[:1]),
+            *(common_english[:1]),
+            *(profile_foundation[1:2]),
+            *(common_major[:1]),
+            *profile_major_required[:5],
+        ]:
+            if code and code not in required_codes:
+                required_codes.append(code)
+        for spec in by_category["MajorElective"]:
+            if profile_id in spec.profile_tags and spec.course_code not in required_codes:
+                required_codes.append(spec.course_code)
+            if len(required_codes) >= 10:
+                break
+
         strong_electives = [
             spec.course_code
             for spec in by_category["MajorElective"]
-            if profile_id in spec.profile_tags and spec.course_code not in profile_specific_required
+            if profile_id in spec.profile_tags and spec.course_code not in required_codes
         ][:3]
         optional_targets = [by_category["GeneralElective"][0].course_code, by_category["PE"][0].course_code]
-        required_codes = common_required + major_required
         deadline_by_code = required_deadline_terms(required_codes)
         for code in required_codes:
             rows.append(

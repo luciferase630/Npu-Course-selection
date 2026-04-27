@@ -71,7 +71,7 @@
 
 - 这张表定义“某个培养方案要求哪些课程代码”。
 - 这张表就是生成阶段的培养方案源表，必须实际输出，不能只输出学生级展开表。
-- 不同 profile 应共享部分基础课，也应有各自的专业核心课。
+- 不同 profile 只应共享少量全校共同必修，也应有各自的专业核心课。当前 `medium` 目标为 `FND001`、`ENG001`、`MCO001` 三门共同 required，避免所有竞争挤在 Foundation。
 - `required` 表示多年培养方案硬事实，不等于本轮必须全部修完。
 - `deadline_term` 应按 `freshman`、`sophomore`、`junior`、`senior`、`graduation_term` 分层。
 - `student_course_code_requirements.csv` 应由 `students.csv.profile_id` 和 `profile_requirements.csv` 自动展开得到。
