@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
+from src.data_generation.io import load_config
 from src.data_generation import audit_synthetic_dataset
 from src.models import BidState, Course, CourseRequirement, Student, UtilityEdge
 from src.llm_clients.behavioral_client import BehavioralAgentClient
@@ -60,6 +62,68 @@ class ToolEnvTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["requirements"][0]["course_code"], "A")
         self.assertEqual(result["requirements"][0]["available_section_count"], 2)
+
+    def test_initial_payload_respects_starter_limits(self) -> None:
+        session = make_session()
+        session.starter_top_courses_max_results = 2
+        session.starter_required_sections_max_per_requirement = 1
+        payload = session.initial_payload()
+        self.assertEqual(len(payload["starter_top_courses"]["courses"]), 2)
+        self.assertEqual(len(payload["starter_required_sections"]["requirements"][0]["sections"]), 1)
+        self.assertIn("starter_top_courses is only a starter sample", payload["tool_protocol"]["catalog_access"])
+
+    def test_default_tool_policy_is_on_demand_search(self) -> None:
+        session = make_session()
+        self.assertEqual(session.starter_top_courses_max_results, 8)
+        self.assertEqual(session.starter_required_sections_max_per_requirement, 3)
+        self.assertFalse(session.require_search_before_submit)
+
+    def test_simple_config_defaults_to_compact_and_on_demand_search(self) -> None:
+        config = load_config("configs/simple_model.yaml")
+        llm_context = config["llm_context"]
+        self.assertEqual(llm_context["tool_history_policy"], "compact_last_n")
+        self.assertEqual(llm_context["tool_history_last_rounds"], 1)
+        self.assertEqual(llm_context["tool_starter_top_courses_max_results"], 8)
+        self.assertEqual(llm_context["tool_starter_required_sections_max_per_requirement"], 3)
+        self.assertFalse(llm_context["tool_require_search_before_submit"])
+
+    def test_tool_prompt_guides_search_without_mandating_it(self) -> None:
+        prompt = Path("prompts/tool_based_system_prompt.md").read_text(encoding="utf-8")
+        self.assertIn("Use `search_courses`", prompt)
+        self.assertIn("starter list does not contain enough options", prompt)
+        self.assertIn("Do not browse just to", prompt)
+        self.assertNotIn("at least once before final", prompt)
+
+    def test_submit_requires_search_when_configured_and_rounds_remain(self) -> None:
+        session = make_session()
+        session.require_search_before_submit = True
+        blocked = session.call_tool(
+            "submit_bids",
+            {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "C-1", "bid": 40}]},
+            rounds_remaining=4,
+        )
+        self.assertEqual(blocked["status"], "error")
+        self.assertEqual(blocked["error_type"], "protocol_error")
+        self.assertEqual(blocked["required_next_tool"], "search_courses")
+
+        search = session.call_tool("search_courses", {"sort_by": "utility", "max_results": 2})
+        self.assertEqual(search["status"], "ok")
+        accepted = session.call_tool(
+            "submit_bids",
+            {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "C-1", "bid": 40}]},
+            rounds_remaining=3,
+        )
+        self.assertEqual(accepted["status"], "accepted")
+
+    def test_search_requirement_does_not_block_near_round_limit(self) -> None:
+        session = make_session()
+        session.require_search_before_submit = True
+        accepted = session.call_tool(
+            "submit_bids",
+            {"bids": [{"course_id": "A-1", "bid": 60}, {"course_id": "C-1", "bid": 40}]},
+            rounds_remaining=1,
+        )
+        self.assertEqual(accepted["status"], "accepted")
 
     def test_check_schedule_reports_core_violations(self) -> None:
         session = make_session()

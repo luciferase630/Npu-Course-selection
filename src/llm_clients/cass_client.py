@@ -78,7 +78,7 @@ class CASSAgentClient:
             decision.diagnostics,
         )
 
-    def interact(self, system_prompt: str, session: StudentSession, max_rounds: int) -> dict:
+    def interact(self, system_prompt: str, session: StudentSession, max_rounds: int, **_kwargs) -> dict:
         decision = cass_select_and_bid(
             student=session.student,
             courses=session.courses,

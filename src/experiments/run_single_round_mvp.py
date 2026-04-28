@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import statistics
 import time
 from collections import Counter
 from pathlib import Path
@@ -59,16 +60,20 @@ def build_agent_type_by_student(
     focal_student_id: str | None = None,
     background_formula_students: set[str] | None = None,
     focal_agent_type: str | None = None,
+    focal_student_ids: set[str] | None = None,
 ) -> dict[str, str]:
     background_formula_students = background_formula_students or set()
     focal_agent_type = focal_agent_type or "openai"
+    focal_ids = set(focal_student_ids or set())
     if focal_student_id:
+        focal_ids.add(focal_student_id)
+    if focal_ids:
         return {
             student_id: (
                 "scripted_policy"
                 if student_id in scripted_students
                 else focal_agent_type
-                if student_id == focal_student_id
+                if student_id in focal_ids
                 else "behavioral_formula"
                 if student_id in background_formula_students
                 else "behavioral"
@@ -105,17 +110,69 @@ def select_background_formula_students(
     return set(shuffled[:count])
 
 
+def parse_student_id_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    path = Path(raw)
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+        parts = []
+        for line in content.splitlines():
+            parts.extend(line.replace(",", " ").split())
+        return [part.strip() for part in parts if part.strip()]
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def select_focal_share_students(
+    student_ids: list[str],
+    share: float,
+    seed: int,
+    exclude_student_ids: set[str] | None = None,
+) -> set[str]:
+    if share <= 0:
+        return set()
+    excluded = exclude_student_ids or set()
+    candidates = [student_id for student_id in sorted(student_ids) if student_id not in excluded]
+    count = round(float(share) * len(candidates))
+    count = max(0, min(len(candidates), count))
+    rng = random.Random(seed + 7070)
+    shuffled = candidates[:]
+    rng.shuffle(shuffled)
+    return set(shuffled[:count])
+
+
 def validate_formula_runtime_args(args, interaction_mode: str, student_ids: list[str]) -> None:
+    if getattr(args, "max_tool_rounds", None) is not None and int(args.max_tool_rounds) <= 0:
+        raise SystemExit("--max-tool-rounds must be positive")
+    explicit_focal_ids = parse_student_id_list(getattr(args, "focal_student_ids", None))
+    focal_share = float(getattr(args, "focal_student_share", 0.0) or 0.0)
+    focal_modes = sum(
+        1
+        for enabled in [
+            bool(args.focal_student_id),
+            bool(explicit_focal_ids),
+            focal_share > 0.0,
+        ]
+        if enabled
+    )
+    if focal_modes > 1:
+        raise SystemExit("Use only one of --focal-student-id, --focal-student-ids, or --focal-student-share")
+    focal_mode_enabled = focal_modes > 0
     if args.focal_student_id and args.focal_student_id not in student_ids:
         raise SystemExit(f"--focal-student-id {args.focal_student_id} is not present in the dataset")
-    if args.focal_student_id and args.agent not in {"openai", "cass"}:
-        raise SystemExit("--focal-student-id is only supported with --agent openai or --agent cass")
-    if args.focal_student_id and interaction_mode != "tool_based":
-        raise SystemExit("--focal-student-id is only supported with --interaction-mode tool_based")
-    if args.focal_student_id and args.experiment_group != "E0_llm_natural_baseline":
-        raise SystemExit("--focal-student-id currently requires E0_llm_natural_baseline")
-    if args.formula_prompt and not args.focal_student_id:
-        raise SystemExit("--formula-prompt requires --focal-student-id")
+    missing_focal_ids = sorted(set(explicit_focal_ids) - set(student_ids))
+    if missing_focal_ids:
+        raise SystemExit(f"--focal-student-ids contains unknown students: {','.join(missing_focal_ids)}")
+    if focal_share < 0.0 or focal_share > 1.0:
+        raise SystemExit("--focal-student-share must be between 0 and 1")
+    if focal_mode_enabled and args.agent not in {"openai", "cass"}:
+        raise SystemExit("focal replacement is only supported with --agent openai or --agent cass")
+    if focal_mode_enabled and interaction_mode != "tool_based":
+        raise SystemExit("focal replacement requires --interaction-mode tool_based")
+    if focal_mode_enabled and args.experiment_group != "E0_llm_natural_baseline":
+        raise SystemExit("focal replacement currently requires E0_llm_natural_baseline")
+    if args.formula_prompt and not focal_mode_enabled:
+        raise SystemExit("--formula-prompt requires --focal-student-id, --focal-student-ids, or --focal-student-share")
     if args.formula_prompt and args.agent != "openai":
         raise SystemExit("--formula-prompt is only supported with --agent openai")
     if args.formula_prompt and interaction_mode != "tool_based":
@@ -539,6 +596,100 @@ def compute_final_decision_metrics(final_decisions: dict[tuple[str, str], dict],
     }
 
 
+def compute_outcome_metrics_by_agent_type(
+    utilities: list[dict],
+    budget_rows: list[dict],
+    allocations: list,
+    final_decisions: dict[tuple[str, str], dict],
+    student_ids: list[str],
+    agent_type_by_student: dict[str, str],
+) -> dict[str, dict]:
+    utility_by_student = {row["student_id"]: row for row in utilities}
+    budget_by_student = {row["student_id"]: row for row in budget_rows}
+    allocations_by_student: dict[str, list] = {student_id: [] for student_id in student_ids}
+    for item in allocations:
+        allocations_by_student.setdefault(item.student_id, []).append(item)
+    output = {}
+    for agent_type in sorted(set(agent_type_by_student.values())):
+        ids = [student_id for student_id in student_ids if agent_type_by_student.get(student_id) == agent_type]
+        if not ids:
+            continue
+        outcome_values = [
+            float(utility_by_student[student_id]["course_outcome_utility"])
+            for student_id in ids
+            if student_id in utility_by_student
+        ]
+        net_values = [
+            float(utility_by_student[student_id]["net_total_utility"])
+            for student_id in ids
+            if student_id in utility_by_student
+        ]
+        beans_paid_values = [
+            int(budget_by_student[student_id]["beans_paid"])
+            for student_id in ids
+            if student_id in budget_by_student
+        ]
+        selected_counts = [
+            sum(
+                1
+                for (sid, _course_id), decision in final_decisions.items()
+                if sid == student_id and decision["selected"]
+            )
+            for student_id in ids
+        ]
+        student_admission_rates = []
+        admitted_count = 0
+        selected_allocation_count = 0
+        for student_id in ids:
+            student_allocations = allocations_by_student.get(student_id, [])
+            admitted = sum(1 for item in student_allocations if item.admitted)
+            admitted_count += admitted
+            selected_allocation_count += len(student_allocations)
+            student_admission_rates.append(admitted / max(1, len(student_allocations)))
+        output[agent_type] = {
+            "student_count": len(ids),
+            "average_course_outcome_utility": round(sum(outcome_values) / max(1, len(outcome_values)), 4),
+            "median_course_outcome_utility": round(statistics.median(outcome_values), 4) if outcome_values else 0.0,
+            "average_net_total_utility": round(sum(net_values) / max(1, len(net_values)), 4),
+            "median_net_total_utility": round(statistics.median(net_values), 4) if net_values else 0.0,
+            "average_beans_paid": round(sum(beans_paid_values) / max(1, len(beans_paid_values)), 4),
+            "average_selected_courses": round(sum(selected_counts) / max(1, len(selected_counts)), 4),
+            "average_student_admission_rate": round(
+                sum(student_admission_rates) / max(1, len(student_admission_rates)),
+                4,
+            ),
+            "pooled_admission_rate": round(admitted_count / max(1, selected_allocation_count), 4),
+        }
+    return output
+
+
+def summarize_tool_trace(tool_trace: list[dict]) -> dict:
+    tool_name_counts: Counter[str] = Counter()
+    check_schedule_feasible_true_count = 0
+    check_schedule_feasible_false_count = 0
+    for attempt in tool_trace:
+        if not isinstance(attempt, dict):
+            continue
+        request = attempt.get("tool_request", {})
+        if not isinstance(request, dict):
+            continue
+        tool_name = str(request.get("tool_name", ""))
+        if not tool_name:
+            continue
+        tool_name_counts[tool_name] += 1
+        result = attempt.get("tool_result", {})
+        if tool_name == "check_schedule" and isinstance(result, dict):
+            if result.get("feasible") is True:
+                check_schedule_feasible_true_count += 1
+            elif result.get("feasible") is False:
+                check_schedule_feasible_false_count += 1
+    return {
+        "tool_name_counts": tool_name_counts,
+        "check_schedule_feasible_true_count": check_schedule_feasible_true_count,
+        "check_schedule_feasible_false_count": check_schedule_feasible_false_count,
+    }
+
+
 def compute_bean_diagnostics(
     allocations: list,
     budget_rows: list[dict],
@@ -694,7 +845,10 @@ def main() -> None:
     parser.add_argument("--time-points", type=int, default=None)
     parser.add_argument("--progress-interval", type=int, default=0)
     parser.add_argument("--focal-student-id", default=None)
+    parser.add_argument("--focal-student-ids", default=None, help="Comma-separated IDs or a text file of IDs to replace.")
+    parser.add_argument("--focal-student-share", type=float, default=0.0)
     parser.add_argument("--formula-prompt", action="store_true")
+    parser.add_argument("--max-tool-rounds", type=int, default=None)
     parser.add_argument("--background-formula-share", type=float, default=0.0)
     parser.add_argument("--background-formula-exclude-student-id", default=None)
     parser.add_argument("--background-formula-policy", default="bid_allocation_v1", choices=["bid_allocation_v1"])
@@ -734,9 +888,17 @@ def main() -> None:
         scripted_students = select_scripted_students(student_ids, args.experiment_group, seed)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
-    background_formula_exclusions = set(scripted_students)
+    focal_student_ids = set(parse_student_id_list(args.focal_student_ids))
     if args.focal_student_id:
-        background_formula_exclusions.add(args.focal_student_id)
+        focal_student_ids.add(args.focal_student_id)
+    focal_share = float(args.focal_student_share or 0.0)
+    if focal_share > 0:
+        focal_student_ids.update(select_focal_share_students(student_ids, focal_share, seed, scripted_students))
+    scripted_focal_overlap = sorted(focal_student_ids & scripted_students)
+    if scripted_focal_overlap:
+        raise SystemExit(f"focal replacement cannot override scripted students: {','.join(scripted_focal_overlap)}")
+    background_formula_exclusions = set(scripted_students)
+    background_formula_exclusions.update(focal_student_ids)
     if args.background_formula_exclude_student_id:
         background_formula_exclusions.add(args.background_formula_exclude_student_id)
     background_formula_students = select_background_formula_students(
@@ -752,6 +914,7 @@ def main() -> None:
         args.focal_student_id,
         background_formula_students,
         focal_agent_type=effective_agent,
+        focal_student_ids=focal_student_ids,
     )
     try:
         client_by_agent = {
@@ -763,12 +926,12 @@ def main() -> None:
             for agent_type in sorted(set(agent_type_by_student.values()))
             if agent_type != "scripted_policy"
         }
-        if args.focal_student_id:
-            focal_agent_type = agent_type_by_student.get(args.focal_student_id, effective_agent)
+        if focal_student_ids:
+            focal_agent_type = effective_agent
             effective_agent = (
-                f"focal_{focal_agent_type}_background_mixed_behavioral_formula"
+                f"focal_{focal_agent_type}_cohort_background_mixed_behavioral_formula"
                 if background_formula_students
-                else f"focal_{focal_agent_type}_background_behavioral"
+                else f"focal_{focal_agent_type}_cohort_background_behavioral"
             )
         elif background_formula_students:
             effective_agent = "mixed_behavioral_formula"
@@ -802,6 +965,9 @@ def main() -> None:
     tool_round_limit_count = 0
     tool_request_char_count_total = 0
     tool_request_char_count_max = 0
+    tool_name_counts: Counter[str] = Counter()
+    check_schedule_feasible_true_count = 0
+    check_schedule_feasible_false_count = 0
     llm_explanation_count = 0
     llm_explanation_missing_count = 0
     llm_explanation_char_count_total = 0
@@ -809,6 +975,9 @@ def main() -> None:
     llm_api_prompt_tokens = 0
     llm_api_completion_tokens = 0
     llm_api_total_tokens = 0
+    llm_provider_name_counts: Counter[str] = Counter()
+    llm_provider_fallback_count = 0
+    llm_provider_fallback_error_counts: Counter[str] = Counter()
     formula_metrics = empty_formula_metrics()
     formula_reconsideration_prompt_count = 0
     background_formula_policy_application_count = 0
@@ -869,7 +1038,7 @@ def main() -> None:
             active_client = client_by_agent.get(agent_type)
             active_tool_system_prompt = (
                 formula_tool_system_prompt
-                if args.formula_prompt and args.focal_student_id == student_id and agent_type == "openai"
+                if args.formula_prompt and student_id in focal_student_ids and agent_type == "openai"
                 else tool_system_prompt
             )
             formula_context_for_decision = formula_course_context(available_course_ids, courses, current_counts)
@@ -903,10 +1072,30 @@ def main() -> None:
                     available_course_ids=available_course_ids,
                     current_waitlist_counts=current_counts,
                     state_dependent_lambda=state_lambda,
+                    starter_top_courses_max_results=int(retry_config.get("tool_starter_top_courses_max_results", 8)),
+                    starter_required_sections_max_per_requirement=int(
+                        retry_config.get("tool_starter_required_sections_max_per_requirement", 3)
+                    ),
+                    require_search_before_submit=bool(retry_config.get("tool_require_search_before_submit", False)),
+                    search_requirement_min_rounds_remaining=int(
+                        retry_config.get("tool_search_requirement_min_rounds_remaining", 2)
+                    ),
                 )
-                max_tool_rounds = int(retry_config.get("max_tool_rounds", 10))
+                max_tool_rounds = (
+                    int(args.max_tool_rounds)
+                    if args.max_tool_rounds is not None
+                    else int(retry_config.get("max_tool_rounds", 10))
+                )
+                tool_history_policy = str(retry_config.get("tool_history_policy", "full"))
+                tool_history_last_rounds = int(retry_config.get("tool_history_last_rounds", 1))
                 try:
-                    tool_result = active_client.interact(active_tool_system_prompt, session, max_tool_rounds)
+                    tool_result = active_client.interact(
+                        active_tool_system_prompt,
+                        session,
+                        max_tool_rounds,
+                        history_policy=tool_history_policy,
+                        history_last_rounds=tool_history_last_rounds,
+                    )
                 except json.JSONDecodeError as exc:
                     tool_result = {
                         "accepted": False,
@@ -947,6 +1136,15 @@ def main() -> None:
                 llm_api_prompt_tokens += int(tool_result.get("api_prompt_tokens", 0))
                 llm_api_completion_tokens += int(tool_result.get("api_completion_tokens", 0))
                 llm_api_total_tokens += int(tool_result.get("api_total_tokens", 0))
+                provider_counts = tool_result.get("provider_name_counts", {})
+                if isinstance(provider_counts, dict):
+                    for provider_name, count in provider_counts.items():
+                        llm_provider_name_counts[str(provider_name)] += int(count or 0)
+                llm_provider_fallback_count += int(tool_result.get("provider_fallback_count", 0) or 0)
+                provider_fallback_errors = tool_result.get("provider_fallback_error_counts", {})
+                if isinstance(provider_fallback_errors, dict):
+                    for error_type, count in provider_fallback_errors.items():
+                        llm_provider_fallback_error_counts[str(error_type)] += int(count or 0)
                 formula_metrics = merge_formula_metrics(
                     formula_metrics,
                     tool_result.get("formula_metrics", empty_formula_metrics()),
@@ -991,6 +1189,10 @@ def main() -> None:
                     tool_round_limit_count += 1
                 raw_output = tool_result.get("final_tool_request")
                 attempts = tool_result.get("tool_trace", [])
+                tool_trace_summary = summarize_tool_trace(attempts)
+                tool_name_counts.update(tool_trace_summary["tool_name_counts"])
+                check_schedule_feasible_true_count += int(tool_trace_summary["check_schedule_feasible_true_count"])
+                check_schedule_feasible_false_count += int(tool_trace_summary["check_schedule_feasible_false_count"])
                 model_decision_explanation = str(tool_result.get("final_decision_explanation", "") or "")
                 final_formula_signals = extract_formula_signals(
                     raw_output,
@@ -1417,6 +1619,14 @@ def main() -> None:
             4,
         )
     final_decision_metrics = compute_final_decision_metrics(final_decisions, student_ids)
+    outcome_metrics_by_agent_type = compute_outcome_metrics_by_agent_type(
+        utilities,
+        budget_rows,
+        allocations,
+        final_decisions,
+        student_ids,
+        agent_type_by_student,
+    )
     bean_diagnostics = compute_bean_diagnostics(allocations, budget_rows, student_ids, agent_type_by_student)
     formula_alpha_count = int(formula_metrics.get("formula_alpha_count", 0) or 0)
     formula_metric_output = {
@@ -1444,8 +1654,13 @@ def main() -> None:
         "agent_requested": requested_agent,
         "agent_effective": effective_agent,
         "interaction_mode": interaction_mode,
+        "max_tool_rounds_effective": args.max_tool_rounds or int(llm_context_config.get("max_tool_rounds", 10)),
         "formula_prompt_enabled": args.formula_prompt,
         "formula_focal_student_id": args.focal_student_id or "",
+        "focal_student_share_requested": round(float(args.focal_student_share or 0.0), 4),
+        "focal_student_share_actual": round(len(focal_student_ids) / max(1, len(student_ids)), 4),
+        "focal_student_count": len(focal_student_ids),
+        "focal_student_ids": sorted(focal_student_ids),
         "background_formula_share_requested": round(float(args.background_formula_share), 4),
         "background_formula_student_count": len(background_formula_students),
         "background_plain_behavioral_student_count": sum(
@@ -1455,6 +1670,7 @@ def main() -> None:
         "cass_policy": args.cass_policy if "cass" in agent_type_by_student.values() else "",
         "background_formula_student_ids": sorted(background_formula_students),
         "agent_type_counts": dict(sorted(Counter(agent_type_by_student.values()).items())),
+        "outcome_metrics_by_agent_type": outcome_metrics_by_agent_type,
         "n_students": len(students),
         "n_courses": len(courses),
         "time_points": time_points,
@@ -1510,6 +1726,11 @@ def main() -> None:
         "average_tool_rounds_per_interaction": round(tool_call_count / max(1, tool_interaction_count), 4),
         "tool_submit_rejected_count": tool_submit_rejected_count,
         "tool_round_limit_count": tool_round_limit_count,
+        "tool_name_counts": dict(sorted(tool_name_counts.items())),
+        "check_schedule_feasible_true_count": check_schedule_feasible_true_count,
+        "check_schedule_feasible_false_count": check_schedule_feasible_false_count,
+        "search_courses_count": int(tool_name_counts.get("search_courses", 0)),
+        "get_course_details_count": int(tool_name_counts.get("get_course_details", 0)),
         "tool_request_char_count_total": tool_request_char_count_total,
         "tool_request_char_count_max": tool_request_char_count_max,
         "llm_explanation_count": llm_explanation_count,
@@ -1523,6 +1744,9 @@ def main() -> None:
         "llm_api_prompt_tokens": llm_api_prompt_tokens,
         "llm_api_completion_tokens": llm_api_completion_tokens,
         "llm_api_total_tokens": llm_api_total_tokens,
+        "llm_provider_name_counts": dict(sorted(llm_provider_name_counts.items())),
+        "llm_provider_fallback_count": llm_provider_fallback_count,
+        "llm_provider_fallback_error_counts": dict(sorted(llm_provider_fallback_error_counts.items())),
         **formula_metric_output,
         "background_formula_policy_application_count": background_formula_policy_application_count,
         "background_formula_policy_signal_count": background_formula_policy_signal_count,
