@@ -404,15 +404,269 @@ bidflow replay run `
   --output outputs/runs/research_large_s048_formula_advanced_replay
 ```
 
-## English Abstract
+## English Version
 
-This project studies course bidding as an asymmetric-information all-pay auction.
-All data are synthetic; no real student records or personal data are used.
+### Is The Rumored Course-Bidding Formula A Trap?
 
-The rumored formula is useful as a crowding signal but fails as a bid rule because
-it ignores course importance, substitutes, budget constraints, and can explode
-beyond the total budget. We fit an advanced crowding-boundary formula that
-predicts a budget share, applies importance multipliers, and enforces single
-course caps. In synthetic backtests, it strongly outperforms the original formula
-as a cutoff-boundary predictor and reduces waste in strategy experiments, though
-it is not a universal guarantee of optimal bidding.
+This repository studies a course-bidding system where every student has a fixed bean budget, every course has limited capacity, and students spend beans to compete for seats. Beans are consumed once submitted, whether the student is admitted or rejected.
+
+In game-theory language, this is an asymmetric-information all-pay auction: everyone pays, but students cannot directly observe how much others will bid.
+
+The practical question is not “how much do I like this course?” The real question is:
+
+**How do I estimate the admission boundary, win the courses that matter, and avoid wasting beans on courses that were never competitive in the first place?**
+
+### The Rumored Formula
+
+A formula has been circulated among students in computer science and several engineering schools:
+
+$$
+f(m,n,\alpha)=(1+\alpha)\cdot\sqrt{m-n}\cdot e^{m/n}
+$$
+
+where:
+
+| Symbol | Meaning |
+| --- | --- |
+| `m` | currently visible waitlist or demand count |
+| `n` | course capacity |
+| `alpha` | manual adjustment factor |
+
+The formula contains a useful intuition: more students and lower capacity mean stronger competition. But it is not a complete bidding rule.
+
+It has three major problems:
+
+1. When `m <= n`, `sqrt(m-n)` is not a real number, so low-competition courses are not handled cleanly.
+2. When `m/n` is large, the exponential term can explode and suggest more than the total budget for one course.
+3. It ignores whether the course is required, whether the student is close to graduation, whether substitutes exist, and how much budget remains.
+
+The formula is not useless. It can act as a public crowding signal. It may even become self-reinforcing: if enough students believe it and bid near its predicted boundary, their behavior can push the real boundary toward the formula.
+
+In our experiments, “30% of students know the formula” is a modeling scenario, not a real survey claim.
+
+### Privacy Statement
+
+This project uses synthetic data only.
+
+No real student records, grades, enrollment histories, course-selection logs, personal names, or private data are used. The generated markets contain synthetic students, synthetic programs, synthetic preferences, synthetic courses, and synthetic bidding behavior.
+
+The goal is to build a structurally plausible sandbox for strategy comparison, not to reproduce any real university system.
+
+### What We Built
+
+This repository contains two main components:
+
+1. **BidFlow sandbox**: generate synthetic course markets, run behavioral agents, formula agents, LLM agents, and CASS agents, then analyze outcomes.
+2. **Bidding model**: estimate admission boundaries from crowding information, apply course-importance multipliers, and enforce budget caps.
+
+The main reports are:
+
+- [Modeling paper](reports/final/paper_2026-04-28_course_bidding_math_model.md)
+- [Research path overview](reports/research_path/README.md)
+- [Experiment matrix and metrics](reports/final/report_2026-04-28_experiment_matrix_and_metrics.md)
+- [Advanced boundary formula report](reports/interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)
+- [CASS sensitivity analysis](reports/interim/report_2026-04-28_cass_sensitivity_analysis.md)
+- [Public-strategy diffusion game](reports/interim/report_2026-04-28_public_strategy_diffusion_game.md)
+
+### Our Advanced Boundary Formula
+
+We do not publish a table of absolute cutoff bids from our synthetic data, because that would be misleading. Absolute cutoffs depend on the local market, year, department, course structure, and student behavior.
+
+Instead, we estimate a **budget share**. First estimate how large the admission boundary is relative to the total budget, then adjust by course importance, and finally apply caps.
+
+Define:
+
+$$
+r=\frac{m}{n}
+$$
+
+$$
+d=\max(0,m-n)
+$$
+
+$$
+p=-0.3\%+3.82\%\cdot\ln(1+d)+0.98\%\cdot\ln(1+r)+3\%
+$$
+
+where:
+
+| Symbol | Meaning |
+| --- | --- |
+| `m` | visible demand or waitlist count |
+| `n` | course capacity |
+| `r` | crowding ratio, equal to `m/n` |
+| `d` | excess demand, equal to `max(0,m-n)` |
+| `p` | estimated base admission-boundary share of the total budget |
+| `ln` | natural logarithm |
+| `3%` | calibration buffer fitted from synthetic experiments |
+
+If `m <= n`, do not use the high-competition formula for ordinary courses. A normal low-competition course can often be tested with `1` bean; important required courses may deserve a small buffer.
+
+If `m > n`, use three steps:
+
+1. Base beans = total budget times `p`.
+2. Adjusted beans = base beans times the course-importance multiplier.
+3. Final bid = the smallest of adjusted beans, remaining budget, and the single-course cap.
+
+The importance multipliers are:
+
+| Course judgment | Multiplier |
+| --- | ---: |
+| Easy substitute | `0.85` |
+| Normal preference | `1.00` |
+| Strong preference or core course | `1.15` |
+| Required or graduation-critical course | `1.30` |
+
+The single-course caps are:
+
+| Course type | Cap |
+| --- | ---: |
+| Ordinary course | `35` beans |
+| Required or graduation-critical course | `45` beans |
+
+These caps are essential. Any real bidding formula that can recommend more than the remaining budget, or more than the total budget for one course, is not operational.
+
+### Worked Examples
+
+Example 1: not crowded.
+
+```text
+m = 18
+n = 30
+```
+
+Since `m <= n`, an ordinary course should not be treated as high competition. A practical bid is:
+
+- Ordinary course: `1` bean.
+- Required or graduation-critical course: `3-5` beans as a small buffer.
+
+Example 2: moderately crowded.
+
+```text
+m = 30
+n = 20
+r = 30 / 20 = 1.5
+d = max(0, 30 - 20) = 10
+ln(1 + d) = ln(11) ≈ 2.40
+ln(1 + r) = ln(2.5) ≈ 0.92
+p ≈ -0.3% + 3.82% × 2.40 + 0.98% × 0.92 + 3% ≈ 12.8%
+```
+
+With a total budget of `100`:
+
+- Normal preference: about `13` beans.
+- Strong preference or core course: about `15` beans.
+
+Example 3: highly crowded.
+
+```text
+m = 45
+n = 15
+r = 45 / 15 = 3
+d = max(0, 45 - 15) = 30
+ln(1 + d) = ln(31) ≈ 3.43
+ln(1 + r) = ln(4) ≈ 1.39
+p ≈ -0.3% + 3.82% × 3.43 + 0.98% × 1.39 + 3% ≈ 17.2%
+```
+
+With a total budget of `100`:
+
+- Normal preference: about `18` beans.
+- Required or graduation-critical course: about `23` beans.
+
+If your local market often requires `30-40` beans when `r≈3`, then your local market is more aggressive than our synthetic calibration. You may add a local buffer, but the bid should still respect the single-course cap and remaining budget.
+
+### Practical Student Strategy
+
+Students do not know the full preference distribution of the entire market. In reality, they usually only know whether a course is required, whether it affects graduation, whether the teacher or topic is especially attractive, and whether there are substitutes.
+
+The executable strategy is:
+
+```text
+Look at m/n first.
+Estimate the boundary share p.
+Add a buffer only for courses that truly matter.
+Take the smallest of formula result, remaining budget, and single-course cap.
+Avoid common endings like 0, 5, and 2 when the bid is near a boundary.
+```
+
+The last point is only a weak heuristic. Many students prefer round numbers, numbers ending in `5`, or easy numbers such as `12` and `22`. If you are already bidding near a competitive boundary, consider less crowded endings such as `13`, `17`, `23`, `27`, or `33`.
+
+But this is reflexive. If everyone avoids the same endings, those endings become crowded too.
+
+### Current Findings
+
+At the prediction level, using `87` runs and `10469` course-section observations:
+
+| Formula | Test error | Coverage | Mean overpay |
+| --- | ---: | ---: | ---: |
+| advanced_boundary_v1 | 1.21 | 94.3% | 0.94 |
+| original_formula_scaled | 4.58 | 72.4% | 2.22 |
+
+The strict conclusion is:
+
+**The advanced formula is much better than the original formula as an admission-boundary predictor. In most strategy backtests, it also reduces waste. However, it is not a universal guarantee of optimal bidding. It must be combined with course selection, course importance, substitutes, and budget caps.**
+
+### BidFlow Quick Start
+
+Install:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -e .
+python -m bidflow --help
+```
+
+Generate a synthetic market:
+
+```powershell
+bidflow market generate --scenario research_large_high --output data/synthetic/research_large
+bidflow market validate data/synthetic/research_large
+```
+
+Run a behavioral-agent baseline market:
+
+```powershell
+bidflow session run `
+  --market data/synthetic/research_large `
+  --population "background=behavioral" `
+  --run-id research_large_800x240x3_behavioral `
+  --time-points 3
+```
+
+Run a fixed-background CASS replay for one focal student:
+
+```powershell
+bidflow replay run `
+  --baseline outputs/runs/research_large_800x240x3_behavioral `
+  --focal S048 `
+  --agent cass `
+  --policy cass_v2 `
+  --data-dir data/synthetic/research_large `
+  --output outputs/runs/research_large_s048_cass_backtest
+```
+
+Read the sandbox guide for data structures, agent inputs, generated preference tables, LLM provider configuration, replay, and analysis:
+
+- [BidFlow sandbox guide](docs/sandbox_guide.md)
+- [Generator scenarios](docs/generator_scenarios.md)
+- [Reproducible experiments](docs/reproducible_experiments.md)
+
+### Final Caveat
+
+This project is a modeling sandbox, not a secret weapon.
+
+If only a few students estimate boundaries well, they may gain an advantage. If everyone uses the same formula, the market reprices itself. Popular courses become more expensive, and even number-ending tricks can stop working.
+
+The real value of this work is not a magical bean number. It is a way to think clearly:
+
+```text
+Crowding gives a public competition signal.
+Course importance determines the safety buffer.
+Budget caps prevent self-destruction.
+Substitutes decide whether a fight is worth entering.
+```
+
+That is the core lesson.
