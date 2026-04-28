@@ -290,6 +290,7 @@ p ≈ -0.3% + 3.82% × 3.43 + 0.98% × 1.39 + 3% ≈ 17.2%
 
 - [论文式总稿：投豆选课中的非对称信息 all-pay auction](reports/final/paper_2026-04-28_course_bidding_math_model.md)
 - [研究路径总览：路线、建模入口、弯路修正](reports/research_path/README.md)
+- [实验总账与指标口径报告](reports/final/report_2026-04-28_experiment_matrix_and_metrics.md)
 - [投豆选课建模过程报告](reports/final/report_2026-04-28_modeling_process.md)
 - [报告阅读索引](reports/README.md)
 - [进阶拥挤比公式与 LLM/BA 对照报告](reports/interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)
