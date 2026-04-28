@@ -1,137 +1,871 @@
-# BidFlow 沙盒平台快速指南
+# BidFlow 沙盒傻瓜式指南
 
-BidFlow 是这个项目的新 CLI 层。它把现有选课 all-pay 仿真、CASS、behavioral baseline、LLM focal、固定背景 replay 包成一个外部用户能直接使用的沙盒。
+BidFlow 是这个仓库的选课投豆实验沙盒。它的目标不是复刻真实教务系统，而是让你像使用一个回测框架一样：
 
-## 安装
+```text
+准备一份市场数据
+-> 放入一批学生策略
+-> 跑选课投豆 session
+-> 生成录取结果和指标
+-> 换一个策略再 replay 或 compare
+```
+
+如果你用过 Backtrader，可以这样类比：
+
+| Backtrader 概念 | BidFlow 对应物 | 说明 |
+| --- | --- | --- |
+| Data Feed | Market CSV 数据集 | 学生、课程、培养方案、偏好边 |
+| Strategy | Agent | behavioral、CASS、LLM 或自定义策略 |
+| Broker / Cerebro | Session runner | 按 T1/T2/T3 驱动 agent 决策并开奖 |
+| Analyzer | `bidflow analyze` | 汇总录取率、效用、花豆和浪费 |
+| Backtest | Replay | 固定背景市场，只替换某个 focal student |
+
+这篇文档按“完全新手”的路径写：先理解文件，再跑命令，再读结果。
+
+## 0. 你应该先知道的五个词
+
+| 词 | 含义 |
+| --- | --- |
+| market | 一套合成选课市场数据，通常是一个目录，里面有若干 CSV |
+| agent | 学生策略。它读可见信息，输出对若干课程的投豆 |
+| session | 完整在线选课过程，学生在一个或多个 time point 中调整投豆 |
+| replay | 固定其他学生不变，只替换一个 focal student 的策略重新分配 |
+| analyze | 读 run 输出，做指标汇总、豆子诊断、公式拟合或 CASS 敏感度 |
+
+核心思想：**market 是输入，run 是输出，agent 是策略，analyze 是读结果。**
+
+## 1. 安装与自检
+
+在仓库根目录运行：
 
 ```powershell
 python -m pip install -e .
+python -m bidflow --help
 bidflow --help
 ```
 
-## 生成市场
+如果 `bidflow` 命令不可用，但 `python -m bidflow --help` 可用，通常是当前 shell 没刷新 Python scripts 路径。先用 `python -m bidflow ...` 即可。
+
+建议每次大改后跑：
+
+```powershell
+python -m compileall src bidflow
+python -m unittest discover -s tests
+```
+
+## 2. BidFlow 的目录心智模型
+
+推荐工作目录结构：
+
+```text
+repo-root/
+├── configs/
+│   ├── simple_model.yaml
+│   └── generation/
+│       ├── medium.yaml
+│       ├── research_large_high.yaml
+│       ├── research_large_medium.yaml
+│       └── research_large_sparse_hotspots.yaml
+├── data/
+│   └── synthetic/
+│       └── research_large/              # market 数据目录
+├── outputs/
+│   ├── runs/
+│   │   └── research_large_behavioral/   # session 或 replay 输出
+│   └── tables/                          # analyze 输出表
+├── bidflow/                             # 新 CLI 和平台接口
+├── src/                                 # 旧核心实现，BidFlow v1 仍复用它
+└── docs/
+```
+
+注意：
+
+- `data/synthetic/*` 和 `outputs/*` 默认不提交到仓库。
+- `configs/`、`bidflow/`、`src/`、`docs/` 是产品代码和文档。
+- BidFlow v1 是兼容迁移层：CLI 很新，但底层 session 仍复用旧 runner，保证历史实验可复现。
+
+## 3. Market：市场数据是什么
+
+一个 market 就是一个文件夹。生成后大概长这样：
+
+```text
+my_market/
+├── profiles.csv
+├── profile_requirements.csv
+├── students.csv
+├── courses.csv
+├── student_course_code_requirements.csv
+├── student_course_utility_edges.csv
+├── generation_metadata.json
+└── bidflow_metadata.json
+```
+
+### 3.1 `profiles.csv`
+
+培养方案定义表。它描述“有哪些学生培养方案”。
+
+| 字段 | 含义 |
+| --- | --- |
+| `profile_id` | 培养方案 ID |
+| `profile_name` | 培养方案名 |
+| `college` | 学院或专业组 |
+
+示例：
+
+```csv
+profile_id,profile_name,college
+P001,Computer Science,Computer
+```
+
+### 3.2 `profile_requirements.csv`
+
+培养方案要求表。它描述“某个培养方案需要哪些课程代码”。
+
+| 字段 | 含义 |
+| --- | --- |
+| `profile_id` | 对应 `profiles.csv` |
+| `course_code` | 课程代码，不是具体教学班 |
+| `requirement_type` | `required`、`strong_elective_requirement`、`optional_target` 等 |
+| `requirement_priority` | 要求优先级 |
+| `deadline_term` | 截止学期或阶段 |
+
+理解重点：
+
+- `course_code` 是课程代码，例如 `FND001`。
+- `course_id` 是具体教学班，例如 `FND001-A`。
+- 培养方案通常关心 `course_code`，选课开奖关心 `course_id`。
+
+### 3.3 `students.csv`
+
+学生表。它描述每个学生的预算、风险类型、学分上限和年级阶段。
+
+| 字段 | 含义 |
+| --- | --- |
+| `student_id` | 学生 ID |
+| `budget_initial` | 初始豆子预算，通常是 `100` |
+| `risk_type` | 风险偏好或 persona |
+| `credit_cap` | 学分上限 |
+| `bean_cost_lambda` | 豆子影子价格参数，主要供模型内部使用 |
+| `grade_stage` | 年级阶段 |
+| `profile_id` | 可选，培养方案 ID |
+| `college` | 可选，学院 |
+| `grade` | 可选，年级 |
+
+真实学生没有精确效用表。这里的字段是实验沙盒变量，不是现实学生隐私。
+
+### 3.4 `courses.csv`
+
+课程教学班表。它描述每一个可投的 section。
+
+| 字段 | 含义 |
+| --- | --- |
+| `course_id` | 具体教学班 ID，例如 `MCO006-A` |
+| `course_code` | 课程代码，例如 `MCO006` |
+| `name` | 课程名 |
+| `teacher_id` | 教师 ID |
+| `teacher_name` | 教师名 |
+| `capacity` | 课程容量 |
+| `time_slot` | 上课时间槽 |
+| `credit` | 学分 |
+| `category` | 课程类别 |
+| `is_required` | 课程本身是否必修标记 |
+| `release_round` | 开放轮次 |
+
+常用判断：
+
+```text
+拥挤比 = visible_waitlist_count / capacity
+```
+
+在 market CSV 里没有最终拥挤比。拥挤比是在 session 运行过程中由当前 waitlist 状态形成的。
+
+### 3.5 `student_course_code_requirements.csv`
+
+学生级课程代码要求表。它是由 `students.csv.profile_id` 和 `profile_requirements.csv` 派生出来的。
+
+| 字段 | 含义 |
+| --- | --- |
+| `student_id` | 学生 ID |
+| `course_code` | 要求对应的课程代码 |
+| `requirement_type` | required / strong elective / optional target 等 |
+| `requirement_priority` | 优先级 |
+| `deadline_term` | 截止阶段 |
+| `substitute_group_id` | 替代组 |
+| `notes` | 备注 |
+
+它回答：“这个学生为什么在乎某个课程代码？”
+
+### 3.6 `student_course_utility_edges.csv`
+
+学生-教学班偏好边表。它描述某个学生对某个具体教学班是否 eligible，以及沙盒内部 utility proxy。
+
+| 字段 | 含义 |
+| --- | --- |
+| `student_id` | 学生 ID |
+| `course_id` | 具体教学班 ID |
+| `eligible` | 是否可选 |
+| `utility` | 沙盒中的课程偏好分 |
+
+重要提醒：
+
+- `utility` 是研究变量，用于算法回测。
+- 真实学生通常只有模糊偏好，不会知道这种精确数字。
+- 如果把结果翻译成学生建议，应该用“必修/毕业压力、强烈喜欢、普通想上、可替代”这种粗分层。
+
+### 3.7 metadata
+
+| 文件 | 作用 |
+| --- | --- |
+| `generation_metadata.json` | 记录生成器参数、scenario、seed、统计摘要 |
+| `bidflow_metadata.json` | 记录 BidFlow CLI 生成信息 |
+
+复现实验时，优先保存 metadata。它能告诉你“这份 market 是怎么来的”。
+
+## 4. 生成 Market
+
+先看内置场景：
 
 ```powershell
 bidflow market scenarios
-bidflow market generate --scenario medium --output ./my_market
-bidflow market validate ./my_market
-bidflow market info ./my_market
 ```
 
-内置场景包括：
+常见场景：
 
-- `medium`
-- `behavioral_large`
-- `research_large_high`
-- `research_large_medium`
-- `research_large_sparse_hotspots`
+| 场景 | 规模 | 用途 |
+| --- | --- | --- |
+| `medium` | 100 students / 80 sections | 小规模 smoke |
+| `behavioral_large` | 300 / 120 | 中等规模行为测试 |
+| `research_large_high` | 800 / 240 | 高竞争主场 |
+| `research_large_medium` | 800 / 240 | 中等竞争 |
+| `research_large_sparse_hotspots` | 800 / 240 | 多数课宽松，少数热点 |
 
-## 初始化自己的策略
+生成一个小 market：
 
 ```powershell
-bidflow agent init my_strategy
-bidflow agent register ./my_strategy
+bidflow market generate --scenario medium --output data/synthetic/my_medium
+bidflow market validate data/synthetic/my_medium
+bidflow market info data/synthetic/my_medium
+```
+
+查看某门课：
+
+```powershell
+bidflow market course data/synthetic/my_medium --course-id FND001-A
+```
+
+覆盖规模参数：
+
+```powershell
+bidflow market generate `
+  --scenario research_large_high `
+  --output data/synthetic/research_large_custom `
+  --n-students 800 `
+  --n-course-sections 240 `
+  --seed 20260428
+```
+
+注意：`market validate` 目前是轻量 schema/load 检查，不等价于完整竞争强度审计。完整 audit 仍可使用旧入口：
+
+```powershell
+python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic/my_medium
+```
+
+## 5. Agent：策略是什么
+
+Agent 读 `AgentContext`，返回 `BidDecision`。
+
+内置 agent：
+
+```powershell
 bidflow agent list
 ```
 
-策略文件只需要实现：
+当前内置：
 
-```python
-from bidflow.agents import AgentContext, BaseAgent, BidDecision, register
+| agent | 含义 |
+| --- | --- |
+| `behavioral` | 9-persona 普通学生基线 |
+| `cass` | Competition-Adaptive Selfish Selector |
+| `llm` | OpenAI-compatible LLM agent |
 
-@register("my_strategy")
-class MyStrategy(BaseAgent):
-    def decide(self, context: AgentContext) -> BidDecision:
-        bids = {}
-        for course in sorted(context.courses, key=lambda item: item.utility, reverse=True)[:5]:
-            bids[course.course_id] = 1
-        return BidDecision(bids=bids, explanation="minimal example")
+### 5.1 Agent 看到什么
+
+Agent 只能看到局部信息：
+
+| 字段 | 含义 |
+| --- | --- |
+| `context.student_id` | 当前学生 |
+| `context.budget_initial` | 初始预算 |
+| `context.budget_available` | 当前可用预算 |
+| `context.credit_cap` | 学分上限 |
+| `context.time_point` | 当前时间点 |
+| `context.time_points_total` | 总时间点数 |
+| `context.courses` | 当前学生可见/可选课程列表 |
+| `context.requirements` | 当前学生培养方案要求 |
+| `context.previous_bids` | 之前对课程投了多少 |
+| `context.previous_selected` | 之前选了哪些课 |
+
+每门课程是 `CourseInfo`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `course.course_id` | 教学班 ID |
+| `course.course_code` | 课程代码 |
+| `course.capacity` | 容量 |
+| `course.observed_waitlist_count` | 当前可见待选人数 |
+| `course.crowding_ratio` | `observed_waitlist_count / capacity` |
+| `course.utility` | 沙盒 utility proxy |
+| `course.credit` | 学分 |
+| `course.time_slot` | 时间 |
+| `course.previous_selected` | 之前是否选过 |
+| `course.previous_bid` | 之前投豆 |
+
+Agent 看不到：
+
+- 其他学生的具体 bids。
+- 最终录取边界。
+- 全局真实偏好分布。
+
+### 5.2 最小策略模板
+
+```powershell
+bidflow agent init my_strategy
 ```
 
-Agent 只能看到 `AgentContext` 中的局部信息：课程容量、可见 waitlist、自己的 utility proxy、培养方案要求、历史 bid 和预算。它看不到其他人的具体 bids，也看不到最终 cutoff。
+生成：
 
-这里的 `utility` 是沙盒里的研究变量，方便算法回测和横向比较。真实学生通常没有精确 utility 表；如果把 BidFlow 结论翻译成学生建议，应优先使用 `m/n = visible_waitlist_count / capacity` 判断竞争边界，再用“必修/核心、强烈想上、一般想上、可替代”的定性偏好分层替代数值 utility。
+```text
+my_strategy/
+├── __init__.py
+├── agent.py
+├── config.yaml
+└── README.md
+```
 
-## 跑在线实验
+核心代码形态：
+
+```python
+from __future__ import annotations
+
+from bidflow.agents import AgentContext, BaseAgent, BidDecision, register
+
+
+@register("my_strategy")
+class MyStrategyAgent(BaseAgent):
+    description = "User strategy scaffold."
+
+    def decide(self, context: AgentContext) -> BidDecision:
+        ordered = sorted(context.courses, key=lambda course: course.utility, reverse=True)
+        bids = {}
+        for course in ordered[:5]:
+            if sum(bids.values()) + 1 <= context.budget_initial:
+                bids[course.course_id] = 1
+        return BidDecision(bids=bids, explanation="Minimal scaffold strategy.")
+```
+
+注册：
+
+```powershell
+bidflow agent register ./my_strategy
+bidflow agent list
+bidflow agent info my_strategy
+```
+
+重要限制：当前 `bidflow session run` v1 仍委托旧 runner，只支持内置 agent 直接跑 session。外部 agent 注册 API 已经存在，但完整外部 agent session 执行还不是 v1 的稳定能力。想跑正式实验，当前优先用内置 `behavioral`、`cass`、`llm`。
+
+### 5.3 写策略时最容易犯的错
+
+| 错误 | 后果 | 修正 |
+| --- | --- | --- |
+| bid 不是整数 | `BidDecision.validate` 会拒绝 | 用 `int()` 或 `ceil()` |
+| 总 bid 超预算 | 提交失败 | 提交前检查 `sum(bids.values()) <= budget` |
+| 对不可见 course_id 投豆 | 提交失败 | 只使用 `context.courses` 里的 ID |
+| 只按 utility 猛投 | 容易在低竞争课浪费 | 同时看 `course.crowding_ratio` |
+| 忘记时间冲突 | session tool 会拒绝 | 用内置 check 或参考 CASS 的筛选逻辑 |
+
+## 6. Session：跑完整在线实验
+
+Session 是“让一批学生在 market 中真实投豆并开奖”。
+
+最小基线：
 
 ```powershell
 bidflow session run `
-  --market ./my_market `
-  --population "focal:S001=cass,background=behavioral" `
-  --output ./outputs/my_test `
+  --market data/synthetic/my_medium `
+  --population "background=behavioral" `
+  --run-id my_medium_behavioral `
+  --output outputs/runs/my_medium_behavioral `
   --time-points 3
 ```
 
-CASS 现在支持多个策略版本：
+这会产生一个 run 输出目录。
+
+只替换一个 focal student：
 
 ```powershell
 bidflow session run `
-  --market ./my_market `
+  --market data/synthetic/my_medium `
   --population "focal:S001=cass,background=behavioral" `
-  --cass-policy cass_v2 `
-  --output ./outputs/my_test
+  --run-id my_medium_s001_cass `
+  --output outputs/runs/my_medium_s001_cass `
+  --time-points 3
 ```
 
-可选值：
+使用 CASS 变体：
 
-- `cass_v1`：旧分段策略，仅作为对照。
-- `cass_smooth`：连续出价曲线。
-- `cass_value`：强省豆版本，适合观察“别当怨种”的极限。
-- `cass_v2`：默认 balanced 策略，当前多市场回测平均 utility 最高。
-- `cass_frontier`：极端 value/bean frontier，对照用。
-- `cass_logit`：用 S 型压力曲线替代理性压力曲线，用来检查响应函数形式敏感性。
+```powershell
+bidflow session run `
+  --market data/synthetic/my_medium `
+  --population "focal:S001=cass,background=behavioral" `
+  --cass-policy cass_value `
+  --run-id my_medium_s001_cass_value `
+  --output outputs/runs/my_medium_s001_cass_value
+```
 
-当前 CLI 先委托旧 runner，所以旧 CSV schema 和旧输出结构仍然保留。新输出目录会额外包含：
+背景 30% 使用公式：
 
-- `bidflow_metadata.json`
-- `population.yaml`
-- `experiment.yaml`
+```powershell
+bidflow session run `
+  --market data/synthetic/research_large `
+  --population "focal:S048=cass,background=behavioral" `
+  --background-formula-share 0.30 `
+  --run-id research_large_s048_cass_mix30 `
+  --output outputs/runs/research_large_s048_cass_mix30
+```
 
-## 固定背景回测
+### 6.1 `--population` 怎么写
+
+| 写法 | 含义 |
+| --- | --- |
+| `background=behavioral` | 全体学生 behavioral |
+| `focal:S001=cass,background=behavioral` | S001 用 CASS，其他人 behavioral |
+| `focal:S048=llm,background=behavioral` | S048 用 LLM，其他人 behavioral |
+
+当前限制：
+
+- `session run` 目前最多支持一个 focal assignment。
+- 背景 agent 当前稳定支持 `behavioral` / `behavioral_formula`。
+- `--formula-prompt` 只适合 LLM focal。
+
+### 6.2 CASS policy 怎么选
+
+| policy | 用途 |
+| --- | --- |
+| `cass_v1` | 旧硬分段，仅对照 |
+| `cass_smooth` | v1 选课 + 连续出价 |
+| `cass_value` | 强反浪费，花豆更少 |
+| `cass_v2` | 默认 balanced 策略 |
+| `cass_frontier` | 单位豆收益边界实验 |
+| `cass_logit` | S 型压力曲线对照 |
+
+新用户默认用 `cass_v2`。
+
+## 7. Run 输出目录怎么看
+
+一次 session 输出大概长这样：
+
+```text
+outputs/runs/my_medium_behavioral/
+├── metrics.json
+├── decisions.csv
+├── bid_events.csv
+├── allocations.csv
+├── budgets.csv
+├── utilities.csv
+├── llm_decision_explanations.jsonl
+├── traces/
+├── bidflow_metadata.json
+├── population.yaml
+└── experiment.yaml
+```
+
+### 7.1 `metrics.json`
+
+全局指标摘要。常看字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `admission_rate` | 总录取率 |
+| `average_selected_courses` | 平均选择课程数 |
+| `average_course_outcome_utility` | 平均课程结果效用 |
+| `average_rejected_wasted_beans` | 平均拒录浪费 |
+| `average_admitted_excess_bid_total` | 平均录取超额 |
+| `average_posthoc_non_marginal_beans` | 平均事后非边际豆 |
+| `fallback_keep_previous_count` | fallback 次数，正式实验应为 `0` |
+| `tool_round_limit_count` | 工具轮数触顶次数，正式实验应为 `0` |
+
+### 7.2 `decisions.csv`
+
+截止时最终投豆，是开奖输入。
+
+| 字段 | 含义 |
+| --- | --- |
+| `student_id` | 学生 |
+| `course_id` | 教学班 |
+| `agent_type` | agent 类型 |
+| `selected` | 截止时是否保留该课 |
+| `bid` | 最终投豆 |
+| `observed_capacity` | 容量 |
+| `observed_waitlist_count_final` | 截止时可见待选人数 |
+
+读法：想知道某个学生最后投了什么，看这里。
+
+### 7.3 `bid_events.csv`
+
+过程事件表。记录每个 time point 中每次改动。
+
+| 字段 | 含义 |
+| --- | --- |
+| `time_point` | 时间点 |
+| `decision_order` | 决策顺序 |
+| `previous_selected` / `new_selected` | 前后是否选择 |
+| `previous_bid` / `new_bid` | 前后投豆 |
+| `action_type` | new_bid / increase / decrease / withdraw / keep |
+| `observed_waitlist_count_before` | 决策前看到的 waitlist |
+| `behavior_tags` | 行为标签 |
+| `reason` | agent 给出的理由 |
+
+读法：想分析“学生什么时候加豆/撤课”，看这里。
+
+### 7.4 `allocations.csv`
+
+开奖结果。
+
+| 字段 | 含义 |
+| --- | --- |
+| `course_id` | 教学班 |
+| `student_id` | 学生 |
+| `bid` | 投豆 |
+| `admitted` | 是否录取 |
+| `cutoff_bid` | 该课程录取边界 |
+| `tie_break_used` | 是否用了同分抽签 |
+
+读法：想知道某门课最终谁中了、边界是多少，看这里。
+
+### 7.5 `budgets.csv`
+
+预算结果。
+
+| 字段 | 含义 |
+| --- | --- |
+| `budget_start` | 初始预算 |
+| `beans_bid_total` | 提交总 bid |
+| `beans_paid` | 实际消耗 |
+| `budget_end` | 剩余预算 |
+
+### 7.6 `utilities.csv`
+
+学生结果效用。
+
+| 字段 | 含义 |
+| --- | --- |
+| `gross_liking_utility` | 录取课程偏好分之和 |
+| `completed_requirement_value` | 完成培养方案要求的价值 |
+| `course_outcome_utility` | 主结果指标 |
+| `remaining_requirement_risk` | 剩余要求风险 |
+| `feasible_schedule_flag` | 课表是否可行 |
+| `net_total_utility` | legacy 净效用口径 |
+
+主报告优先看 `course_outcome_utility`，不要把 legacy `net_total_utility` 当主结论。
+
+## 8. Replay：固定背景回放
+
+Replay 用来回答：
+
+```text
+其他学生怎么投都固定不动，
+只把某个 focal student 换成另一个策略，
+这个学生会不会更好？
+```
+
+先有一个 baseline：
+
+```powershell
+bidflow session run `
+  --market data/synthetic/my_medium `
+  --population "background=behavioral" `
+  --run-id my_medium_behavioral `
+  --output outputs/runs/my_medium_behavioral `
+  --time-points 3
+```
+
+再 replay：
 
 ```powershell
 bidflow replay run `
-  --baseline ./outputs/baseline `
+  --baseline outputs/runs/my_medium_behavioral `
   --focal S001 `
   --agent cass `
-  --data-dir ./my_market `
-  --output ./outputs/replay_s001_cass
+  --data-dir data/synthetic/my_medium `
+  --output outputs/runs/my_medium_s001_cass_replay
 ```
 
-这对应“给定其他人怎么投，只替换 focal student 策略”的单智能体最优响应评测。
-
-## 分析
+一次比较多个 agent：
 
 ```powershell
-bidflow analyze summary --runs ./outputs/baseline ./outputs/my_test
-bidflow analyze beans --runs ./outputs/baseline ./outputs/my_test
-bidflow analyze focal --run ./outputs/my_test --student-id S001
+bidflow replay run `
+  --baseline outputs/runs/my_medium_behavioral `
+  --focal S001 `
+  --agents cass,llm `
+  --data-dir data/synthetic/my_medium `
+  --output outputs/runs/my_medium_s001_replay_compare
 ```
 
-主指标是 `course_outcome_utility`。豆子相关字段只用于诊断是否“怨种式多投”，不作为福利成本扣除。这个主指标是实验评价口径，不是学生端需要手算的投豆公式。
+CASS 参数覆盖：
 
-## CASS 策略族与敏感度
+```powershell
+bidflow replay run `
+  --baseline outputs/runs/my_medium_behavioral `
+  --focal S001 `
+  --agent cass `
+  --policy cass_v2 `
+  --param price_penalty_balanced=2.4 `
+  --data-dir data/synthetic/my_medium `
+  --output outputs/runs/my_medium_s001_cass_price_high
+```
 
-完整 CASS 对比不只跑一个默认策略，而是跑 6 个策略族和一组 one-at-a-time 敏感度扰动：
+注意：Replay 和 online session 的数字不能硬比。Replay 是固定背景单智能体响应；online 是真实信息路径下的完整仿真。
+
+## 9. Analyze：怎么看结果
+
+比较两个 run：
+
+```powershell
+bidflow analyze summary --runs outputs/runs/my_medium_behavioral outputs/runs/my_medium_s001_cass
+```
+
+看豆子浪费：
+
+```powershell
+bidflow analyze beans --runs outputs/runs/my_medium_behavioral outputs/runs/my_medium_s001_cass
+```
+
+看某个学生：
+
+```powershell
+bidflow analyze focal --run outputs/runs/my_medium_s001_cass --student-id S001
+```
+
+拟合拥挤比边界公式：
+
+```powershell
+bidflow analyze crowding-boundary --quick
+bidflow analyze crowding-boundary
+```
+
+跑 CASS 策略族与敏感度：
+
+```powershell
+bidflow analyze cass-sensitivity --quick
+bidflow analyze cass-sensitivity
+```
+
+常见输出：
+
+| 命令 | 输出 |
+| --- | --- |
+| `summary` | admission、selected、utility、fallback |
+| `beans` | rejected waste、excess、non-marginal、HHI |
+| `focal` | 某个学生的 utilities row |
+| `crowding-boundary` | 公式拟合 summary、bin table、报告、公式配置 |
+| `cass-sensitivity` | CASS policy summary、OAT summary |
+
+## 10. 从 0 到 1：一条最小可跑链
+
+```powershell
+# 1. 安装
+python -m pip install -e .
+
+# 2. 生成一个小市场
+bidflow market generate --scenario medium --output data/synthetic/my_medium
+
+# 3. 检查市场
+bidflow market validate data/synthetic/my_medium
+bidflow market info data/synthetic/my_medium
+
+# 4. 跑普通学生基线
+bidflow session run `
+  --market data/synthetic/my_medium `
+  --population "background=behavioral" `
+  --run-id my_medium_behavioral `
+  --output outputs/runs/my_medium_behavioral `
+  --time-points 3
+
+# 5. 固定背景，把 S001 换成 CASS
+bidflow replay run `
+  --baseline outputs/runs/my_medium_behavioral `
+  --focal S001 `
+  --agent cass `
+  --data-dir data/synthetic/my_medium `
+  --output outputs/runs/my_medium_s001_cass_replay
+
+# 6. 看汇总
+bidflow analyze summary --runs outputs/runs/my_medium_behavioral outputs/runs/my_medium_s001_cass_replay
+bidflow analyze beans --runs outputs/runs/my_medium_behavioral outputs/runs/my_medium_s001_cass_replay
+```
+
+跑完后你应该能回答：
+
+- 基线市场录取率是多少？
+- S001 换成 CASS 后 `course_outcome_utility` 有没有变好？
+- CASS 花了多少豆？
+- 拒录浪费和录取超额是否下降？
+
+## 11. 常见任务配方
+
+### 11.1 我想生成不同竞争强度的数据
+
+```powershell
+bidflow market generate --scenario research_large_high --output data/synthetic/research_large
+bidflow market generate --scenario research_large_medium --output data/synthetic/research_large_medium_competition
+bidflow market generate --scenario research_large_sparse_hotspots --output data/synthetic/research_large_sparse_hotspots
+```
+
+### 11.2 我想看某个学生为什么失败
+
+```powershell
+bidflow analyze focal --run outputs/runs/my_run --student-id S048
+```
+
+然后手动查：
+
+```text
+decisions.csv    看他投了哪些课
+allocations.csv  看哪些课没录、cutoff 是多少
+budgets.csv      看他花了多少豆
+bid_events.csv   看他在哪个时间点加豆或撤课
+```
+
+### 11.3 我想比较 CASS-v1 和 CASS-v2
+
+```powershell
+bidflow replay run `
+  --baseline outputs/runs/my_medium_behavioral `
+  --focal S001 `
+  --agent cass `
+  --policy cass_v1 `
+  --data-dir data/synthetic/my_medium `
+  --output outputs/runs/s001_cass_v1
+
+bidflow replay run `
+  --baseline outputs/runs/my_medium_behavioral `
+  --focal S001 `
+  --agent cass `
+  --policy cass_v2 `
+  --data-dir data/synthetic/my_medium `
+  --output outputs/runs/s001_cass_v2
+
+bidflow analyze summary --runs outputs/runs/s001_cass_v1 outputs/runs/s001_cass_v2
+bidflow analyze beans --runs outputs/runs/s001_cass_v1 outputs/runs/s001_cass_v2
+```
+
+### 11.4 我想做正式 CASS 敏感度分析
 
 ```powershell
 bidflow analyze cass-sensitivity
 ```
 
-快速 smoke 版本：
+快速检查用：
 
 ```powershell
 bidflow analyze cass-sensitivity --quick
 ```
 
-默认输出：
+### 11.5 我想拟合公式
 
-- `outputs/tables/cass_sensitivity_detail.csv`
-- `outputs/tables/cass_sensitivity_policy_summary.csv`
-- `outputs/tables/cass_sensitivity_oat_summary.csv`
+```powershell
+bidflow analyze crowding-boundary --quick
+```
 
-这个入口用于复现“CASS-v2 不是拍脑袋分段函数”的模型检验：同时比较 v1 分段、smooth 连续曲线、value 省豆、balanced 默认、frontier 边界、logit 响应，并检查关键超参数扰动后结论是否翻转。
+正式跑：
 
-## 旧入口
+```powershell
+bidflow analyze crowding-boundary
+```
 
-旧的 `python -m src.*` 命令和 `scripts/*.ps1` 仍然保留。它们现在是 compatibility layer，用来复现实验历史结果；新用户优先使用 `bidflow`。迁移映射见 `docs/legacy_entrypoints.md`。
+正式跑会扫描已有 `outputs/runs`，生成 summary、bin table 和报告。不要把原始 outputs 提交到仓库。
+
+## 12. 操作安全与坑
+
+### 12.1 `--output` 可能覆盖目录
+
+当前 `bidflow session run --output` 会复制旧 runner 输出。如果目标目录已存在，v1 会删除后重建。正式跑前确认路径：
+
+```powershell
+git status --short
+```
+
+不要把重要手工文件放在 `outputs/runs/<run_id>/` 里。
+
+### 12.2 生成数据和 outputs 不入库
+
+默认不要提交：
+
+```text
+data/synthetic/*
+outputs/runs/*
+outputs/tables/*
+.env*
+```
+
+提交前检查：
+
+```powershell
+git status --short
+```
+
+### 12.3 外部 agent 不是安全沙盒
+
+`bidflow agent register ./my_strategy` 会执行本地 Python 文件。只注册你信任的代码。
+
+### 12.4 LLM 实验要报告 provider
+
+LLM 行为会受模型和 provider fallback 影响。报告 LLM 实验时至少写：
+
+- model/provider
+- token count
+- fallback events
+- tool round limit count
+- submit rejected count
+
+### 12.5 不要混比 replay 和 online
+
+固定背景 replay 说明“给定市场下某个人换策略是否更好”。完整 online session 说明“真实信息路径下策略是否稳定”。两者数值不能硬放在一起排总榜。
+
+## 13. 读报告时怎么对照
+
+| 你关心的问题 | 先读 |
+| --- | --- |
+| 项目整体在干什么 | [根 README](../README.md) |
+| 报告之间怎么引用 | [报告逻辑与引用关系图](../reports/research_path/report_logic_and_citation_map.md) |
+| 做过哪些实验 | [实验总账](../reports/final/report_2026-04-28_experiment_matrix_and_metrics.md) |
+| 数学建模总论 | [论文式总稿](../reports/final/paper_2026-04-28_course_bidding_math_model.md) |
+| CASS 为什么不是拍脑袋 | [CASS 敏感度报告](../reports/interim/report_2026-04-28_cass_sensitivity_analysis.md) |
+| 新公式怎么拟合 | [公式拟合报告](../reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md) |
+| 策略公开后会怎样 | [二阶博弈报告](../reports/interim/report_2026-04-28_public_strategy_diffusion_game.md) |
+
+## 14. 当前 v1 平台边界
+
+BidFlow 现在已经能完成主要研究工作，但还不是最终完整平台：
+
+- `session run` 仍是旧 runner 的 thin wrapper。
+- 外部 agent 注册存在，但 session v1 稳定执行范围仍以内置 agent 为主。
+- `market validate` 是轻检查，不是完整 audit。
+- 输出 schema 保持旧结构，是为了历史实验兼容。
+- 真正完整的插件式 session engine 仍是后续里程碑。
+
+这不影响当前用途：生成市场、跑基线、跑 CASS/LLM focal、固定背景回放、公式拟合和敏感度分析已经可用。
+
+## 15. 最后一句
+
+把 BidFlow 当成一个投豆市场回测框架：
+
+```text
+market 是数据，
+agent 是策略，
+session 是撮合和开奖，
+replay 是单人策略替换，
+analyze 是指标系统。
+```
+
+先用小 `medium` 场景跑通，再上 `research_large`。先读 `metrics.json` 和 `decisions.csv`，再深挖 `bid_events.csv` 和 `allocations.csv`。这样最不容易迷路。
