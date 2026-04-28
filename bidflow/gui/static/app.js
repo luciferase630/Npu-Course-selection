@@ -62,6 +62,9 @@ async function submitForm(event) {
   try {
     const result = await api(endpoint, payload);
     print(result);
+    if (form.dataset.visual === "strategy" && result.visual) {
+      renderStrategyVisual(result.visual);
+    }
     if (result.job_id) {
       await pollJob(result.job_id);
     } else {
@@ -70,6 +73,62 @@ async function submitForm(event) {
   } catch (error) {
     print({ ok: false, error: String(error.message || error) });
   }
+}
+
+function renderStrategyVisual(visual) {
+  const target = document.getElementById("visualization");
+  const histogram = visual.bid_histogram || {};
+  const agents = visual.agent_type_counts || {};
+  const topCourses = visual.top_crowded_courses || [];
+  const focal = visual.focal_selected_courses || [];
+  target.innerHTML = `
+    <div class="visual-grid">
+      <div>
+        <h3>Agent 构成</h3>
+        ${barList(agents)}
+      </div>
+      <div>
+        <h3>投豆分布</h3>
+        ${barList(histogram)}
+      </div>
+      <div>
+        <h3>关键指标</h3>
+        <pre>${escapeHtml(JSON.stringify(visual.metrics || {}, null, 2))}</pre>
+      </div>
+    </div>
+    <h3>最拥挤课程</h3>
+    ${table(topCourses, ["course_id", "crowding_ratio", "waitlist", "capacity", "average_bid", "max_bid"])}
+    <h3>目标学生投豆</h3>
+    ${focal.length ? table(focal, ["course_id", "bid", "waitlist", "capacity", "admitted"]) : "<p>未指定学生，或该学生没有 selected 课程。</p>"}
+  `;
+}
+
+function barList(values) {
+  const entries = Object.entries(values);
+  if (!entries.length) return "<p>暂无数据</p>";
+  const max = Math.max(...entries.map(([, value]) => Number(value) || 0), 1);
+  return entries
+    .map(([label, value]) => {
+      const width = Math.max(4, Math.round(((Number(value) || 0) / max) * 100));
+      return `<div class="bar-row"><span>${escapeHtml(label)}</span><div class="bar-track"><div class="bar" style="width:${width}%"></div></div><strong>${escapeHtml(String(value))}</strong></div>`;
+    })
+    .join("");
+}
+
+function table(rows, columns) {
+  if (!rows.length) return "<p>暂无数据</p>";
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${rows
+            .map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(String(row[column] ?? ""))}</td>`).join("")}</tr>`)
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 async function pollJob(jobId) {

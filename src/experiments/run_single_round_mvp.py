@@ -157,22 +157,44 @@ def select_focal_share_students(
     return set(shuffled[:count])
 
 
+def select_focal_count_students(
+    student_ids: list[str],
+    count: int,
+    seed: int,
+    exclude_student_ids: set[str] | None = None,
+) -> set[str]:
+    if count <= 0:
+        return set()
+    excluded = exclude_student_ids or set()
+    candidates = [student_id for student_id in sorted(student_ids) if student_id not in excluded]
+    if count > len(candidates):
+        raise SystemExit(f"--focal-student-count exceeds available students after exclusions: {count}>{len(candidates)}")
+    rng = random.Random(seed + 8080)
+    shuffled = candidates[:]
+    rng.shuffle(shuffled)
+    return set(shuffled[:count])
+
+
 def validate_formula_runtime_args(args, interaction_mode: str, student_ids: list[str]) -> None:
     if getattr(args, "max_tool_rounds", None) is not None and int(args.max_tool_rounds) <= 0:
         raise SystemExit("--max-tool-rounds must be positive")
     explicit_focal_ids = parse_student_id_list(getattr(args, "focal_student_ids", None))
     focal_share = float(getattr(args, "focal_student_share", 0.0) or 0.0)
+    focal_count = int(getattr(args, "focal_student_count", 0) or 0)
     focal_modes = sum(
         1
         for enabled in [
             bool(args.focal_student_id),
             bool(explicit_focal_ids),
             focal_share > 0.0,
+            focal_count > 0,
         ]
         if enabled
     )
     if focal_modes > 1:
-        raise SystemExit("Use only one of --focal-student-id, --focal-student-ids, or --focal-student-share")
+        raise SystemExit(
+            "Use only one of --focal-student-id, --focal-student-ids, --focal-student-share, or --focal-student-count"
+        )
     focal_mode_enabled = focal_modes > 0
     if args.focal_student_id and args.focal_student_id not in student_ids:
         raise SystemExit(f"--focal-student-id {args.focal_student_id} is not present in the dataset")
@@ -181,6 +203,10 @@ def validate_formula_runtime_args(args, interaction_mode: str, student_ids: list
         raise SystemExit(f"--focal-student-ids contains unknown students: {','.join(missing_focal_ids)}")
     if focal_share < 0.0 or focal_share > 1.0:
         raise SystemExit("--focal-student-share must be between 0 and 1")
+    if focal_count < 0:
+        raise SystemExit("--focal-student-count must be non-negative")
+    if focal_count > len(student_ids):
+        raise SystemExit("--focal-student-count cannot exceed the number of students in the dataset")
     if focal_mode_enabled and args.agent not in {"openai", "cass"}:
         raise SystemExit("focal replacement is only supported with --agent openai or --agent cass")
     if focal_mode_enabled and interaction_mode != "tool_based":
@@ -188,7 +214,9 @@ def validate_formula_runtime_args(args, interaction_mode: str, student_ids: list
     if focal_mode_enabled and args.experiment_group != "E0_llm_natural_baseline":
         raise SystemExit("focal replacement currently requires E0_llm_natural_baseline")
     if args.formula_prompt and not focal_mode_enabled:
-        raise SystemExit("--formula-prompt requires --focal-student-id, --focal-student-ids, or --focal-student-share")
+        raise SystemExit(
+            "--formula-prompt requires --focal-student-id, --focal-student-ids, --focal-student-share, or --focal-student-count"
+        )
     if args.formula_prompt and args.agent != "openai":
         raise SystemExit("--formula-prompt is only supported with --agent openai")
     if args.formula_prompt and interaction_mode != "tool_based":
@@ -863,6 +891,7 @@ def main() -> None:
     parser.add_argument("--focal-student-id", default=None)
     parser.add_argument("--focal-student-ids", default=None, help="Comma-separated IDs or a text file of IDs to replace.")
     parser.add_argument("--focal-student-share", type=float, default=0.0)
+    parser.add_argument("--focal-student-count", type=int, default=0)
     parser.add_argument("--formula-prompt", action="store_true")
     parser.add_argument("--formula-policy", default=LEGACY_FORMULA_POLICY, choices=list(FORMULA_POLICIES))
     parser.add_argument("--formula-prompt-policy", default=None, choices=list(FORMULA_POLICIES))
@@ -917,6 +946,9 @@ def main() -> None:
     focal_share = float(args.focal_student_share or 0.0)
     if focal_share > 0:
         focal_student_ids.update(select_focal_share_students(student_ids, focal_share, seed, scripted_students))
+    focal_count = int(args.focal_student_count or 0)
+    if focal_count > 0:
+        focal_student_ids.update(select_focal_count_students(student_ids, focal_count, seed, scripted_students))
     scripted_focal_overlap = sorted(focal_student_ids & scripted_students)
     if scripted_focal_overlap:
         raise SystemExit(f"focal replacement cannot override scripted students: {','.join(scripted_focal_overlap)}")
@@ -1682,6 +1714,7 @@ def main() -> None:
         "formula_prompt_enabled": args.formula_prompt,
         "formula_focal_student_id": args.focal_student_id or "",
         "focal_student_share_requested": round(float(args.focal_student_share or 0.0), 4),
+        "focal_student_count_requested": int(args.focal_student_count or 0),
         "focal_student_share_actual": round(len(focal_student_ids) / max(1, len(student_ids)), 4),
         "focal_student_count": len(focal_student_ids),
         "focal_student_ids": sorted(focal_student_ids),

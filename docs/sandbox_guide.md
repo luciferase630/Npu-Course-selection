@@ -54,6 +54,19 @@ python -m bidflow gui
 
 GUI 默认只绑定 `127.0.0.1`，会在浏览器里打开 BidFlow 工作台。它覆盖 CLI 的主要流程：生成 market、validate/info、跑 session、跑 replay、做 analyze、查看 agent 和预览输出文件。后续章节中的命令行参数，在 GUI 里基本都有对应表单字段。
 
+如果要研究“有多少学生开始用大模型”，Session 页面可以直接把固定人数或固定比例的学生替换成 LLM。命令行等价写法是：
+
+```powershell
+python -m bidflow session run `
+  --market data/synthetic/my_market `
+  --population "background=behavioral" `
+  --focal-agent llm `
+  --focal-student-count 20 `
+  --run-id my_market_20_llm
+```
+
+也可以用 `--focal-student-share 0.10` 替换 10% 学生。LLM 会真实调用 provider，所以先确认 `.env.local` 或当前 shell 已配置模型和 key。
+
 建议每次大改后跑：
 
 ```powershell

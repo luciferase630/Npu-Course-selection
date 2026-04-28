@@ -8,6 +8,8 @@ import sys
 import threading
 import time
 import webbrowser
+import csv
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -245,6 +247,9 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/analysis/crowding-boundary":
                 self._start(_crowding_boundary_args(payload))
                 return
+            if path == "/api/analysis/strategy-visual":
+                self._json({"ok": True, "visual": _strategy_visual(payload)})
+                return
             if path == "/api/jobs/cancel":
                 job_id = str(payload.get("job_id", "")).strip()
                 self._json({"ok": self.server.jobs.cancel(job_id)})
@@ -401,6 +406,11 @@ def _session_args(payload: dict[str, Any]) -> list[str]:
     _append_value(args, "--experiment-config", payload.get("experiment_config"))
     _append_value(args, "--experiment-group", payload.get("experiment_group"))
     _append_value(args, "--interaction-mode", payload.get("interaction_mode"))
+    _append_value(args, "--focal-agent", payload.get("focal_agent"))
+    _append_value(args, "--focal-student-id", payload.get("focal_student_id"))
+    _append_value(args, "--focal-student-ids", payload.get("focal_student_ids"))
+    _append_value(args, "--focal-student-share", payload.get("focal_student_share"))
+    _append_value(args, "--focal-student-count", payload.get("focal_student_count"))
     _append_bool(args, "--formula-prompt", payload.get("formula_prompt"))
     _append_value(args, "--background-formula-share", payload.get("background_formula_share"))
     _append_value(args, "--cass-policy", payload.get("cass_policy"))
@@ -470,6 +480,126 @@ def _preview_file(payload: dict[str, Any], cwd: Path) -> dict[str, Any]:
     data = path.read_bytes()[:MAX_PREVIEW_BYTES]
     text = data.decode("utf-8-sig", errors="replace")
     return {"ok": True, "path": str(path), "truncated": path.stat().st_size > MAX_PREVIEW_BYTES, "text": text}
+
+
+def _strategy_visual(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_run = str(payload.get("run", "")).strip()
+    if not raw_run:
+        raise ValueError("run is required")
+    run = Path(raw_run)
+    if not run.is_absolute():
+        run = REPO_ROOT / run
+    run = run.resolve()
+    decisions_path = run / "decisions.csv"
+    if not decisions_path.exists():
+        raise ValueError(f"missing decisions.csv under {run}")
+    decisions = _read_csv_rows(decisions_path)
+    allocations = _read_csv_rows(run / "allocations.csv") if (run / "allocations.csv").exists() else []
+    metrics = json.loads((run / "metrics.json").read_text(encoding="utf-8")) if (run / "metrics.json").exists() else {}
+    student_id = str(payload.get("student_id", "")).strip()
+
+    student_agent: dict[str, str] = {}
+    selected_by_agent: Counter[str] = Counter()
+    bid_bins: Counter[str] = Counter()
+    course_rows: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in decisions:
+        agent = str(row.get("agent_type", ""))
+        sid = str(row.get("student_id", ""))
+        if sid and agent:
+            student_agent[sid] = agent
+        if str(row.get("selected", "")).lower() != "true":
+            continue
+        bid = _to_int(row.get("bid"))
+        selected_by_agent[agent] += 1
+        bid_bins[_bid_bin(bid)] += 1
+        course_rows[str(row.get("course_id", ""))].append(row)
+
+    admitted_by_key = {
+        (str(row.get("student_id", "")), str(row.get("course_id", ""))): str(row.get("admitted", "")).lower() == "true"
+        for row in allocations
+    }
+    top_courses = []
+    for course_id, rows in course_rows.items():
+        bids = [_to_int(row.get("bid")) for row in rows]
+        sample = rows[0]
+        capacity = _to_int(sample.get("observed_capacity"))
+        waitlist = _to_int(sample.get("observed_waitlist_count_final"))
+        top_courses.append(
+            {
+                "course_id": course_id,
+                "selected_count": len(rows),
+                "capacity": capacity,
+                "waitlist": waitlist,
+                "crowding_ratio": round(waitlist / max(1, capacity), 4),
+                "average_bid": round(sum(bids) / max(1, len(bids)), 3),
+                "max_bid": max(bids) if bids else 0,
+            }
+        )
+    top_courses.sort(key=lambda item: (item["crowding_ratio"], item["waitlist"], item["average_bid"]), reverse=True)
+
+    focal_rows = []
+    if student_id:
+        for row in decisions:
+            if str(row.get("student_id", "")) != student_id or str(row.get("selected", "")).lower() != "true":
+                continue
+            focal_rows.append(
+                {
+                    "course_id": row.get("course_id", ""),
+                    "bid": _to_int(row.get("bid")),
+                    "capacity": _to_int(row.get("observed_capacity")),
+                    "waitlist": _to_int(row.get("observed_waitlist_count_final")),
+                    "admitted": admitted_by_key.get((student_id, str(row.get("course_id", ""))), None),
+                }
+            )
+        focal_rows.sort(key=lambda item: int(item["bid"]), reverse=True)
+
+    return {
+        "run": str(run),
+        "agent_type_counts": dict(sorted(Counter(student_agent.values()).items())),
+        "selected_course_count_by_agent": dict(sorted(selected_by_agent.items())),
+        "bid_histogram": {label: bid_bins.get(label, 0) for label in ["1", "2-5", "6-10", "11-20", "21-40", "41+"]},
+        "top_crowded_courses": top_courses[:12],
+        "focal_student_id": student_id,
+        "focal_selected_courses": focal_rows,
+        "metrics": {
+            key: metrics.get(key, "")
+            for key in [
+                "admission_rate",
+                "average_selected_courses",
+                "average_course_outcome_utility",
+                "average_rejected_wasted_beans",
+                "average_admitted_excess_bid_total",
+                "focal_student_count",
+                "agent_type_counts",
+            ]
+        },
+    }
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bid_bin(bid: int) -> str:
+    if bid <= 1:
+        return "1"
+    if bid <= 5:
+        return "2-5"
+    if bid <= 10:
+        return "6-10"
+    if bid <= 20:
+        return "11-20"
+    if bid <= 40:
+        return "21-40"
+    return "41+"
 
 
 def _guard_preview_path(path: Path, cwd: Path) -> None:

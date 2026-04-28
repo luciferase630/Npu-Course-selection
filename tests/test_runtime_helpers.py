@@ -10,6 +10,7 @@ from src.experiments.run_single_round_mvp import (
     compute_focal_metrics,
     compute_utilities,
     select_background_formula_students,
+    select_focal_count_students,
     select_focal_share_students,
     validate_formula_runtime_args,
 )
@@ -154,6 +155,15 @@ class RuntimeHelperTests(unittest.TestCase):
         right = select_focal_share_students(student_ids, 0.10, 20260425, {"S001", "S002"})
         self.assertEqual(left, right)
         self.assertEqual(len(left), 80)
+        self.assertNotIn("S001", left)
+        self.assertNotIn("S002", left)
+
+    def test_focal_count_student_selection_is_deterministic_and_excludes_scripted(self) -> None:
+        student_ids = [f"S{i:03d}" for i in range(1, 21)]
+        left = select_focal_count_students(student_ids, 5, 20260425, {"S001", "S002"})
+        right = select_focal_count_students(student_ids, 5, 20260425, {"S001", "S002"})
+        self.assertEqual(left, right)
+        self.assertEqual(len(left), 5)
         self.assertNotIn("S001", left)
         self.assertNotIn("S002", left)
 

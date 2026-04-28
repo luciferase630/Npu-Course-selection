@@ -33,6 +33,11 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     run.add_argument("--experiment-group", default="E0_llm_natural_baseline")
     run.add_argument("--interaction-mode", default="tool_based")
     run.add_argument("--formula-prompt", action="store_true")
+    run.add_argument("--focal-agent", choices=["llm", "openai", "cass"], default=None)
+    run.add_argument("--focal-student-id", default=None)
+    run.add_argument("--focal-student-ids", default=None, help="Comma-separated IDs or a text file of IDs to replace.")
+    run.add_argument("--focal-student-share", type=float, default=0.0)
+    run.add_argument("--focal-student-count", type=int, default=0)
     run.add_argument("--background-formula-share", type=float, default=0.0)
     run.add_argument(
         "--cass-policy",
@@ -51,10 +56,24 @@ def run(args: argparse.Namespace) -> int:
         population_value = str(experiment_config.get("population", args.population))
     population = Population.parse(population_value)
     focal_assignments = population.focal_assignments
-    if len(focal_assignments) > 1:
-        raise SystemExit("session run currently supports at most one focal assignment")
-    focal_student_id = next(iter(focal_assignments), None)
-    requested_agent = focal_assignments[focal_student_id] if focal_student_id else population.background_agent
+    explicit_focal_mode = any(
+        [
+            bool(args.focal_student_id),
+            bool(args.focal_student_ids),
+            float(args.focal_student_share or 0.0) > 0.0,
+            int(args.focal_student_count or 0) > 0,
+        ]
+    )
+    if explicit_focal_mode and focal_assignments:
+        raise SystemExit("Use either --population focal assignments or explicit --focal-student-* options, not both")
+    focal_student_id = next(iter(focal_assignments), None) if len(focal_assignments) == 1 else None
+    focal_student_ids = ",".join(sorted(focal_assignments)) if len(focal_assignments) > 1 else None
+    population_focal_agents = set(focal_assignments.values())
+    if len(population_focal_agents) > 1:
+        raise SystemExit("session run currently requires all focal population assignments to use the same agent")
+    population_focal_agent = next(iter(population_focal_agents), None)
+    focal_agent = args.focal_agent or population_focal_agent or ("llm" if explicit_focal_mode else None)
+    requested_agent = focal_agent if (explicit_focal_mode or focal_assignments) else population.background_agent
     legacy_agent = AGENT_TO_LEGACY.get(requested_agent)
     if legacy_agent is None:
         raise SystemExit(f"session run can only delegate built-in agents for now, got: {requested_agent}")
@@ -88,6 +107,16 @@ def run(args: argparse.Namespace) -> int:
     ]
     if focal_student_id:
         command.extend(["--focal-student-id", focal_student_id])
+    if focal_student_ids:
+        command.extend(["--focal-student-ids", focal_student_ids])
+    if args.focal_student_id:
+        command.extend(["--focal-student-id", str(args.focal_student_id)])
+    if args.focal_student_ids:
+        command.extend(["--focal-student-ids", str(args.focal_student_ids)])
+    if args.focal_student_share:
+        command.extend(["--focal-student-share", str(args.focal_student_share)])
+    if args.focal_student_count:
+        command.extend(["--focal-student-count", str(args.focal_student_count)])
     if args.formula_prompt:
         command.append("--formula-prompt")
     if args.background_formula_share:
@@ -106,7 +135,19 @@ def run(args: argparse.Namespace) -> int:
         if output.exists():
             shutil.rmtree(output)
         shutil.copytree(legacy_output, output)
-    _write_session_metadata(final_output, args, population, run_id, experiment_config, time_points, interaction_mode, experiment_group)
+    _write_session_metadata(
+        final_output,
+        args,
+        population,
+        run_id,
+        experiment_config,
+        time_points,
+        interaction_mode,
+        experiment_group,
+        focal_agent=focal_agent,
+        focal_student_id=focal_student_id,
+        focal_student_ids=focal_student_ids,
+    )
     print(f"session output: {final_output}")
     return 0
 
@@ -120,6 +161,9 @@ def _write_session_metadata(
     time_points: int,
     interaction_mode: str,
     experiment_group: str,
+    focal_agent: str | None = None,
+    focal_student_id: str | None = None,
+    focal_student_ids: str | None = None,
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
     (output / "population.yaml").write_text(
@@ -137,8 +181,13 @@ def _write_session_metadata(
         "experiment_group": experiment_group,
         "interaction_mode": interaction_mode,
         "formula_prompt": bool(args.formula_prompt),
+        "focal_agent": focal_agent or "",
+        "focal_student_id": args.focal_student_id or focal_student_id or "",
+        "focal_student_ids": args.focal_student_ids or focal_student_ids or "",
+        "focal_student_share": float(args.focal_student_share or 0.0),
+        "focal_student_count": int(args.focal_student_count or 0),
         "background_formula_share": float(args.background_formula_share),
-        "cass_policy": args.cass_policy if population.background_agent == "cass" or any(agent == "cass" for agent in population.focal_assignments.values()) else "",
+        "cass_policy": args.cass_policy if population.background_agent == "cass" or focal_agent == "cass" or any(agent == "cass" for agent in population.focal_assignments.values()) else "",
         "experiment_config": experiment_config,
     }
     (output / "experiment.yaml").write_text(yaml.safe_dump(experiment, allow_unicode=True, sort_keys=False), encoding="utf-8")

@@ -94,6 +94,11 @@ class UnitExternalAgent(BaseAgent):
         self.assertIn("--codes", market_create_help.stdout)
         self.assertIn("--dry-run", market_create_help.stdout)
         self.assertIn("--audit", market_create_help.stdout)
+        session_help = self.run_cli("session", "run", "--help")
+        self.assertEqual(session_help.returncode, 0, session_help.stderr)
+        self.assertIn("--focal-agent", session_help.stdout)
+        self.assertIn("--focal-student-count", session_help.stdout)
+        self.assertIn("--focal-student-share", session_help.stdout)
 
     def test_market_create_generates_complete_dataset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

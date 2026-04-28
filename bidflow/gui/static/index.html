@@ -129,6 +129,17 @@
           <label>Experiment config <input name="experiment_config" /></label>
           <label>Experiment group <input name="experiment_group" value="E0_llm_natural_baseline" /></label>
           <label>Interaction mode <input name="interaction_mode" value="tool_based" /></label>
+          <label>替换 agent
+            <select name="focal_agent">
+              <option value=""></option>
+              <option value="llm">llm / openai</option>
+              <option value="cass">cass</option>
+            </select>
+          </label>
+          <label>替换单个学生 <input name="focal_student_id" placeholder="S001" /></label>
+          <label>替换学生列表 <input name="focal_student_ids" placeholder="S001,S048 或文件路径" /></label>
+          <label>替换比例 <input name="focal_student_share" type="number" step="0.01" min="0" max="1" placeholder="0.10" /></label>
+          <label>替换人数 <input name="focal_student_count" type="number" min="0" placeholder="10" /></label>
           <label>Background formula share <input name="background_formula_share" type="number" step="0.01" value="0" /></label>
           <label>CASS policy
             <select name="cass_policy">
@@ -213,6 +224,12 @@
             <label>Student ID <input name="student_id" value="S001" /></label>
             <button type="submit">查看学生</button>
           </form>
+          <form class="surface api-form" data-endpoint="/api/analysis/strategy-visual" data-visual="strategy">
+            <h2>策略可视化</h2>
+            <label>Run <input name="run" value="outputs/runs/my_market_behavioral" /></label>
+            <label>Student ID <input name="student_id" placeholder="可选，例如 S001" /></label>
+            <button type="submit">生成可视化</button>
+          </form>
           <form class="surface api-form" data-endpoint="/api/analysis/cass-sensitivity" data-job="true">
             <h2>CASS Sensitivity</h2>
             <label>Output dir <input name="output_dir" value="outputs/runs/cass_sensitivity" /></label>
@@ -236,6 +253,10 @@
             <button type="submit">拟合边界公式</button>
           </form>
         </div>
+        <section class="surface">
+          <h2>可视化面板</h2>
+          <div id="visualization" class="visualization"></div>
+        </section>
       </section>
 
       <section id="agents" class="panel">

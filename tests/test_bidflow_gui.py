@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from bidflow.gui.server import create_server
+from bidflow.gui.server import _session_args, create_server
 
 
 class BidFlowGuiTests(unittest.TestCase):
@@ -57,6 +57,20 @@ class BidFlowGuiTests(unittest.TestCase):
             self.assertIn("dry-run", job["stdout"])
             self.assertFalse(market_dir.exists())
 
+    def test_session_payload_exposes_llm_cohort_replacement(self) -> None:
+        args = _session_args(
+            {
+                "market": "data/synthetic/my_market",
+                "population": "background=behavioral",
+                "focal_agent": "llm",
+                "focal_student_count": 20,
+            }
+        )
+        self.assertIn("--focal-agent", args)
+        self.assertIn("llm", args)
+        self.assertIn("--focal-student-count", args)
+        self.assertIn("20", args)
+
     def test_file_preview_rejects_secret_like_paths(self) -> None:
         with running_server() as base_url:
             with self.assertRaises(HTTPError) as raised:
@@ -94,6 +108,8 @@ class BidFlowGuiTests(unittest.TestCase):
                     {
                         "market": str(market_dir),
                         "population": "background=behavioral",
+                        "focal_agent": "cass",
+                        "focal_student_count": 2,
                         "output": str(run_dir),
                         "run_id": run_id,
                         "time_points": 3,
@@ -102,6 +118,16 @@ class BidFlowGuiTests(unittest.TestCase):
                 )
                 self.assertEqual(wait_for_job(base_url, session["job_id"])["status"], "succeeded")
                 self.assertTrue((run_dir / "metrics.json").exists())
+                metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+                self.assertEqual(metrics["focal_student_count"], 2)
+                self.assertEqual(metrics["agent_type_counts"]["cass"], 2)
+                visual = post_json(
+                    base_url + "/api/analysis/strategy-visual",
+                    {"run": str(run_dir), "student_id": metrics["focal_student_ids"][0]},
+                )
+                self.assertTrue(visual["ok"], visual)
+                self.assertEqual(visual["visual"]["agent_type_counts"]["cass"], 2)
+                self.assertTrue(visual["visual"]["bid_histogram"])
 
                 replay = post_json(
                     base_url + "/api/replays/run",
