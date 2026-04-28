@@ -5,12 +5,14 @@
 ## 1. 总建模报告
 
 - [论文式总稿：投豆选课中的非对称信息 all-pay auction](../final/paper_2026-04-28_course_bidding_math_model.md)
+- [报告逻辑与引用关系图](report_logic_and_citation_map.md)
 - [实验总账与指标口径报告](../final/report_2026-04-28_experiment_matrix_and_metrics.md)
 - [投豆选课建模过程报告](../final/report_2026-04-28_modeling_process.md)
 
-推荐先读论文式总稿，再读实验总账，最后按需要读建模过程报告。它们解释：
+推荐先读论文式总稿，再读报告逻辑图和实验总账，最后按需要读建模过程报告。它们解释：
 
 - 为什么投豆选课是非对称信息 all-pay auction。
+- README、final、interim、reviews、historical 报告之间怎么互相引用。
 - 为什么使用合成数据。
 - 做过哪些实验、对应哪些指标、哪些结果不能硬比。
 - `utility` 是实验评价变量，不是学生现实计算器。

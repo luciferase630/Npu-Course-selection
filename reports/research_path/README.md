@@ -18,8 +18,8 @@
    从流传公式开始，解释为什么要做合成市场、BA、LLM、CASS、进阶公式和策略扩散实验。
 2. [建模报告入口](modeling_report_index.md)  
    把完整建模报告、公式拟合报告、CASS 报告和二阶博弈报告串起来。
-3. [走过的弯路与修正](wrong_turns_and_lessons.md)  
-   记录哪些结论被后续实验推翻或收紧，避免读者误读旧报告。
+3. [报告逻辑与引用关系图](report_logic_and_citation_map.md)：说明 README、final、interim、reviews、historical 的层级和引用方向。
+4. [走过的弯路与修正](wrong_turns_and_lessons.md)：记录哪些结论被后续实验推翻或收紧，避免读者误读旧报告。
 
 ## 当前结论边界
 
