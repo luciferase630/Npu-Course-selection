@@ -6,7 +6,7 @@
 
 ## 1. 问题定义
 
-投豆选课可以看成一个带非对称信息的 all-pay auction：
+投豆选课可以看成一个带非对称信息的 all-pay auction。这里的 all-pay auction 指“投了就消耗”的拍卖机制：不只是赢家付出成本，没录取的人也会消耗已经投出的豆子。非对称信息指学生只能看到容量、排队人数和自己的需求，看不到别人真实投豆。
 
 - 每个学生有固定预算 `B`。
 - 学生能看到课程容量 `n`、当前可见排队人数 `m`、课程时间、学分和自己对课程的大致偏好。
@@ -85,13 +85,15 @@
 
 重要结论是：公式不是万能策略。单独把旧公式塞给 BA，在 S048 案例中反而显著降低 utility；但公式作为拥挤信号交给 LLM 或规则策略使用时，可以帮助策略更克制、更分散、更少浪费。
 
-## 5. 流传公式的问题
+## 5. 网传公式的问题与公共信号解释
 
 被评估的流传公式是：
 
-```text
-f(m,n,alpha) = (1 + alpha) * sqrt(m - n) * exp(m/n)
-```
+$$
+f(m,n,\alpha)=(1+\alpha)\sqrt{m-n}\,e^{m/n}
+$$
+
+这个公式在计算机和几个工科学院中有流通。项目把“约 30% 学生知道公式”作为实验场景，用来研究它作为公共信号时是否会改变市场；这不是对真实传播比例的调查结论。
 
 它的问题：
 
@@ -101,36 +103,56 @@ f(m,n,alpha) = (1 + alpha) * sqrt(m - n) * exp(m/n)
 
 因此旧公式可以作为 crowding signal，但不能直接作为最终 bid。
 
+它仍可能“看起来有效”的原因是公共信号效应：如果一部分学生相信它并把 bids 投到公式附近，公式本身会改变市场边界。少数人知道时，它更像私有信息；很多人都知道时，热门课 cutoff 会被重新抬高。
+
 ## 6. 拥挤比边界公式
 
 我们把目标改成拟合预算占比，而不是给模拟数据里的绝对 cutoff 表：
 
-```text
-r = m / n
-d = max(0, m - n)
+$$
+r=\frac{m}{n},\qquad d=\max(0,m-n)
+$$
 
-boundary_share =
-  clip(beta0 + beta1 * log(1 + d) + beta2 * log(1 + r) + tau,
-       0,
-       single_course_cap_share)
+当 $m\le n$ 时，普通课先从 `1` 豆低价试探开始；重要课可以给小安全垫，但不机械套高竞争公式。
 
-suggested_bid =
-  ceil(B * boundary_share * importance_multiplier)
+当 $m>n$ 时，先估基础边界预算占比：
 
-suggested_bid =
-  min(suggested_bid, remaining_budget, single_course_cap_share * B)
-```
+$$
+s_0=
+\left[
+\beta_0+\beta_d\ln(1+d)+\beta_r\ln(1+r)+\tau
+\right]_0^c
+$$
+
+其中：
+
+$$
+[x]_0^c=\min(c,\max(0,x))
+$$
+
+最终建议投豆为：
+
+$$
+\hat b=
+\min\left(
+R,\,
+cB,\,
+\left\lceil B\cdot s_0\cdot \lambda \right\rceil
+\right)
+$$
+
+这里 $B$ 是总预算，$R$ 是剩余预算，$c$ 是单课预算上限占比，$\lambda$ 是课程重要性系数。
 
 当前 `advanced_boundary_v1` 系数来自合成实验回测：
 
 | 参数 | 值 |
 | --- | ---: |
-| `beta0` | `-0.002941319228` |
-| `beta1` | `0.038235108556` |
-| `beta2` | `0.009779802941` |
-| `tau` | `0.03` |
-| 普通单课 cap | `0.35B` |
-| 必修/毕业压力 cap | `0.45B` |
+| $\beta_0$ | `-0.002941319228` |
+| $\beta_d$ | `0.038235108556` |
+| $\beta_r$ | `0.009779802941` |
+| $\tau$ | `0.03` |
+| 普通单课 cap | `c=0.35` |
+| 必修/毕业压力 cap | `c=0.45` |
 
 默认重要性系数：
 
@@ -142,6 +164,8 @@ suggested_bid =
 | 必修/毕业压力 | `1.30` |
 
 这套公式的公开定位是“激进稳拿”：整体 coverage 目标在 90%-95%，同时用 cap 避免旧公式式爆炸。它不是现实录取保证，也不能替代选课策略。
+
+对数项 $\ln(1+d)$ 和 $\ln(1+r)$ 的作用是表达“拥挤越强，边界越高，但增长不能像指数一样爆炸”。这也是它和网传公式最大的数学差异之一。
 
 ## 7. 现实可执行修正：重要性系数与尾数
 
@@ -155,13 +179,7 @@ r = m / n
 
 如果一门课已经爆满，`r` 代表很多人愿意把它放进候选集合。它不能告诉你每个人会投多少，但可以作为竞争者投豆边界的起点。
 
-学生端可执行版本是：
-
-```text
-base_bid = budget * boundary_share
-final_bid = base_bid * importance_multiplier
-final_bid = min(final_bid, remaining_budget, single_course_cap)
-```
+学生端可执行版本是：先用公式估边界预算占比，再用课程重要性调整，最后截断。
 
 重要性系数只需要粗分：
 

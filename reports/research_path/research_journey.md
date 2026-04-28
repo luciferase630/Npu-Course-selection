@@ -94,15 +94,16 @@ LLM 加公式 prompt 后，表现比 LLM plain 更稳。机制不是“照公式
 
 早期曾想给出模拟数据中的 cutoff 表，但这会误导现实学生。后续改成拟合预算占比：
 
-```text
-r = m / n
-d = max(0, m - n)
+$$
+r=\frac{m}{n},\qquad d=\max(0,m-n)
+$$
 
-boundary_share =
-  clip(beta0 + beta1 * log(1 + d) + beta2 * log(1 + r) + tau,
-       0,
-       single_course_cap_share)
-```
+$$
+s_0=
+\left[
+\beta_0+\beta_d\ln(1+d)+\beta_r\ln(1+r)+\tau
+\right]_0^c
+$$
 
 再乘课程重要性系数：
 

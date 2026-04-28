@@ -32,10 +32,18 @@
 
 也就是现在的 `advanced_boundary_v1`：
 
-```text
-boundary_share = f(m/n, max(0,m-n))
-suggested_bid = budget * boundary_share * importance_multiplier
-```
+$$
+r=\frac{m}{n},\qquad d=\max(0,m-n)
+$$
+
+$$
+s_0=
+\left[
+\beta_0+\beta_d\ln(1+d)+\beta_r\ln(1+r)+\tau
+\right]_0^c
+$$
+
+再用预算、重要性系数和单课 cap 转成最终投豆。
 
 ## 3. 弯路：把低 rejected waste 误读成更聪明
 
