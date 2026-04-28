@@ -130,6 +130,8 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 
 ## 最新报告
 
+- [投豆选课建模过程报告](reports/final/report_2026-04-28_modeling_process.md)
+- [报告阅读索引](reports/README.md)
 - [进阶拥挤比公式与 LLM/BA 对照报告](reports/interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)
 - [公式拟合与激进稳拿校准报告](reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md)
 - [CASS 策略族与敏感度分析](reports/interim/report_2026-04-28_cass_sensitivity_analysis.md)
@@ -151,6 +153,8 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 python -m bidflow --help
 ```
+
+完整建模过程见 [投豆选课建模过程报告](reports/final/report_2026-04-28_modeling_process.md)，完整命令链见 [可复现实验入口](docs/reproducible_experiments.md)。
 
 生成合成市场：
 

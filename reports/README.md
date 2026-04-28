@@ -1,13 +1,27 @@
 # reports
 
-放阶段性报告和最终报告。
+这里保存项目报告。当前仓库已经经历多轮重构，旧报告只作为实验轨迹保留；读者应优先阅读下面的“当前主线”。
 
-- `interim/`：阶段性实验记录、方法草稿和中间结论。当前 CASS、LLM+formula、mix30 公式市场报告都在这里。
-- `reviews/`：实现审阅、方法审阅和阶段性 code review 记录。
-- `final/`：最终论文、答辩材料或完整数学建模报告。
+## 当前主线
 
-核心阅读顺序：
+1. [投豆选课建模过程报告](final/report_2026-04-28_modeling_process.md)：解释问题建模、合成数据、评价指标、公式拟合、CASS 和实验模式。
+2. [公式拟合与激进稳拿校准报告](interim/report_2026-04-28_crowding_boundary_formula_fit.md)：给出 `m/n` 拥挤比到边界预算占比的统计拟合过程。
+3. [进阶拥挤比公式与 LLM/BA 对照报告](interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)：比较旧公式、新公式、BA 和 LLM 使用公式后的表现。
+4. [CASS 策略族与敏感度分析](interim/report_2026-04-28_cass_sensitivity_analysis.md)：按数学建模思路比较 6 个 CASS 策略族和参数敏感性。
+5. [CASS 多学生回测](interim/report_2026-04-28_cass_multifocal_llm_batch.md)：检查 S048 之外的 focal students。
 
-1. `interim/report_2026-04-27_formula_baseline_and_llm_strategy.md`
-2. `interim/report_2026-04-27_cass_algorithm_backtest.md`
-3. `interim/report_2026-04-27_cass_vs_llm_formula_head_to_head.md`
+## 补充结论
+
+- [大模型学生与策略 Agent 的关键发现](final/findings_2026-04-28_llm_humanlike_vs_strategy_agents.md)
+
+## 目录说明
+
+- `final/`：当前推荐阅读的主报告和较稳定结论。
+- `interim/`：阶段性实验记录。2026-04-28 的报告仍是当前结论的重要依据；2026-04-27 及更早报告多为 historical。
+- `reviews/`：实现审阅、方法审阅和阶段性 code review 记录，主要面向维护者。
+
+## 阅读提醒
+
+- 所有实验数据均为合成数据，不包含真实学生隐私。
+- `utility` 是实验评价变量，不是学生现实中可直接计算的量。
+- 历史报告中的措辞可能已被后续实验修正；公开引用时以 `final/` 与 2026-04-28 的主线报告为准。

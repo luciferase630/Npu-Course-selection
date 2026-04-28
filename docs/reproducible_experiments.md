@@ -22,6 +22,14 @@ bidflow analyze crowding-boundary --quick
 bidflow analyze crowding-boundary
 ```
 
+进阶公式配置会写入：
+
+```text
+configs/formulas/advanced_boundary_v1.yaml
+```
+
+`--quick` 默认只写到 `outputs/tables/*_quick`，不会覆盖正式报告和正式公式配置。
+
 ## 1. 环境
 
 ```powershell
@@ -33,8 +41,9 @@ python -m pip install -r requirements.txt
 验证代码：
 
 ```powershell
-python -m compileall src
+python -m compileall src bidflow
 python -m unittest discover -s tests
+python -m bidflow --help
 ```
 
 ## 2. 生成数据
