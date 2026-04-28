@@ -465,12 +465,10 @@ class BehavioralAgentClient:
 class BehavioralFormulaAgentClient(BehavioralAgentClient):
     """Behavioral course selection with formula-based bid allocation."""
 
-    def __init__(self, base_seed: int = 20260425, policy: str = "bid_allocation_v1") -> None:
-        if policy != "bid_allocation_v1":
-            raise ValueError(f"Unsupported behavioral formula policy: {policy}")
+    def __init__(self, base_seed: int = 20260425, policy: str = "legacy_formula_v1") -> None:
         super().__init__(base_seed=base_seed)
         self.policy = policy
-        self.allocator = FormulaBidAllocator(alpha_policy=AlphaPolicy(base_seed))
+        self.allocator = FormulaBidAllocator(alpha_policy=AlphaPolicy(base_seed), policy=policy)
         self._last_formula_policy_metrics: dict[str, object] = {}
 
     def interact(self, system_prompt: str, session, max_rounds: int) -> dict:

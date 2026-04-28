@@ -29,10 +29,11 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     boundary.add_argument("--run-root", action="append", default=None, help="Run root directory. May be repeated.")
     boundary.add_argument("--no-sibling", action="store_true", help="Do not scan the sibling llm-tests worktree outputs.")
     boundary.add_argument("--quick", action="store_true", help="Use a small run subset for smoke testing.")
-    boundary.add_argument("--detail-table", default="outputs/tables/crowding_boundary_observations.csv")
-    boundary.add_argument("--summary-table", default="outputs/tables/crowding_boundary_model_summary.csv")
-    boundary.add_argument("--bin-table", default="outputs/tables/crowding_boundary_bin_table.csv")
-    boundary.add_argument("--report", default="reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md")
+    boundary.add_argument("--detail-table", default=None)
+    boundary.add_argument("--summary-table", default=None)
+    boundary.add_argument("--bin-table", default=None)
+    boundary.add_argument("--report", default=None)
+    boundary.add_argument("--formula-config", default=None)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -73,6 +74,7 @@ def run(args: argparse.Namespace) -> int:
             summary_table=args.summary_table,
             bin_table=args.bin_table,
             report_path=args.report,
+            formula_config_path=args.formula_config,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

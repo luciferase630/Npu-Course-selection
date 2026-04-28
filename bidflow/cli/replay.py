@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from bidflow.core.replay import run_replay
+from src.student_agents.advanced_boundary_formula import FORMULA_POLICIES, LEGACY_FORMULA_POLICY
 
 
 def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -20,6 +21,8 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     run.add_argument("--data-dir", default=None)
     run.add_argument("--config", default="configs/simple_model.yaml")
     run.add_argument("--formula-prompt", action="store_true")
+    run.add_argument("--formula-policy", default=LEGACY_FORMULA_POLICY, choices=list(FORMULA_POLICIES))
+    run.add_argument("--formula-prompt-policy", default=LEGACY_FORMULA_POLICY, choices=list(FORMULA_POLICIES))
     run.add_argument(
         "--policy",
         default="cass_v2",
@@ -51,6 +54,8 @@ def run(args: argparse.Namespace) -> int:
             data_dir=args.data_dir,
             config_path=args.config,
             formula_prompt=args.formula_prompt,
+            formula_policy=args.formula_policy,
+            formula_prompt_policy=args.formula_prompt_policy,
             cass_policy=args.policy,
             cass_params=_parse_params(args.param),
         )
@@ -70,6 +75,8 @@ def _write_replay_metadata(output: Path, args: argparse.Namespace, agent: str) -
         "agent": agent,
         "data_dir": args.data_dir,
         "formula_prompt": bool(args.formula_prompt),
+        "formula_policy": args.formula_policy,
+        "formula_prompt_policy": args.formula_prompt_policy if args.formula_prompt else "",
         "policy": args.policy if agent == "cass" else "",
         "params": _parse_params(args.param) if agent == "cass" else {},
     }

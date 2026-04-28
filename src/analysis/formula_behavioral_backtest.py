@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
@@ -30,6 +31,7 @@ from src.student_agents.formula_bid_policy import (
     heat_alpha_for_ratio,
     largest_remainder_with_caps,
 )
+from src.student_agents.advanced_boundary_formula import FORMULA_POLICIES, LEGACY_FORMULA_POLICY, resolve_formula_policy
 
 
 def read_final_decisions(path: Path) -> dict[tuple[str, str], dict]:
@@ -219,6 +221,7 @@ def run_backtest(
     seed_offset: int = 0,
     data_dir: str | None = None,
     allocation_seed: int | None = None,
+    formula_policy: str = LEGACY_FORMULA_POLICY,
 ) -> dict[str, object]:
     config = load_config(config_path)
     apply_data_dir_override(config, data_dir)
@@ -264,7 +267,8 @@ def run_backtest(
         for requirement in requirements_by_student.get(focal_student_id, [])
     }
     profile = sample_behavioral_profile(students[focal_student_id], base_seed)
-    allocator = FormulaBidAllocator(alpha_policy=AlphaPolicy(base_seed))
+    formula_policy = resolve_formula_policy(formula_policy)
+    allocator = FormulaBidAllocator(alpha_policy=AlphaPolicy(base_seed), policy=formula_policy)
     formula_bids, signals, formula_signal_metrics = allocator.allocate(
         student=students[focal_student_id],
         profile=profile,
@@ -324,7 +328,7 @@ def run_backtest(
     metrics = {
         "baseline_run_dir": str(baseline_dir),
         "focal_student_id": focal_student_id,
-        "formula_policy": "behavioral_formula_bid_allocation_v1",
+        "formula_policy": formula_policy,
         "course_selection_fixed": True,
         "background_fixed": True,
         "base_seed": base_seed,
@@ -404,6 +408,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--allocation-seed", type=int, default=None)
+    parser.add_argument("--formula-policy", default=LEGACY_FORMULA_POLICY, choices=list(FORMULA_POLICIES))
     return parser.parse_args()
 
 
@@ -417,6 +422,7 @@ def main() -> None:
         seed_offset=args.seed_offset,
         data_dir=args.data_dir,
         allocation_seed=args.allocation_seed,
+        formula_policy=args.formula_policy,
     )
     print(json.dumps(metrics, ensure_ascii=False, indent=2, sort_keys=True))
 

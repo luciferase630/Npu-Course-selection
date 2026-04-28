@@ -6,6 +6,14 @@ from dataclasses import asdict, dataclass
 
 from src.llm_clients.formula_extractor import compute_formula_signal
 from src.models import Course, CourseRequirement, Student, UtilityEdge
+from src.student_agents.advanced_boundary_formula import (
+    ADVANCED_FORMULA_POLICY,
+    LEGACY_FORMULA_POLICY,
+    AdvancedBoundaryConfig,
+    advanced_boundary_reference,
+    load_advanced_boundary_config,
+    resolve_formula_policy,
+)
 from src.student_agents.behavioral import BehavioralProfile
 
 
@@ -55,6 +63,13 @@ class FormulaCourseSignal:
     m_le_n_guard: bool
     clipped_by_course_cap: bool
     course_bid_cap: int
+    formula_policy: str = LEGACY_FORMULA_POLICY
+    importance_label: str = "standard"
+    importance_multiplier: float = 1.0
+    advanced_boundary_share: float | None = None
+    advanced_boundary_bid_reference: int | None = None
+    suggested_bid_before_compression: int = 0
+    clipped_by_remaining_budget: bool = False
     formula_norm: float = 0.0
     utility_norm: float = 0.0
     requirement_norm: float = 0.0
@@ -122,11 +137,15 @@ class FormulaBidAllocator:
         weights: BidWeights | None = None,
         course_cap_absolute: int = 40,
         course_cap_ratio: float = 0.45,
+        policy: str = LEGACY_FORMULA_POLICY,
+        advanced_config: AdvancedBoundaryConfig | None = None,
     ) -> None:
         self.alpha_policy = alpha_policy
         self.weights = weights or BidWeights()
         self.course_cap_absolute = int(course_cap_absolute)
         self.course_cap_ratio = float(course_cap_ratio)
+        self.policy = resolve_formula_policy(policy)
+        self.advanced_config = advanced_config or load_advanced_boundary_config()
 
     def allocate(
         self,
@@ -143,6 +162,18 @@ class FormulaBidAllocator:
         time_point: int,
         time_points_total: int,
     ) -> tuple[dict[str, int], list[FormulaCourseSignal], dict[str, object]]:
+        if self.policy == ADVANCED_FORMULA_POLICY:
+            return self._allocate_advanced(
+                student=student,
+                selected_course_ids=selected_course_ids,
+                baseline_bids=baseline_bids,
+                courses=courses,
+                edges=edges,
+                requirements_by_code=requirements_by_code,
+                derived_penalties=derived_penalties,
+                waitlist_context=waitlist_context,
+            )
+
         course_cap = min(self.course_cap_absolute, int(math.floor(self.course_cap_ratio * student.budget_initial)))
         if course_cap <= 0:
             course_cap = max(1, student.budget_initial)
@@ -194,6 +225,8 @@ class FormulaBidAllocator:
                     m_le_n_guard=m <= n,
                     clipped_by_course_cap=clipped_by_course_cap,
                     course_bid_cap=course_cap,
+                    formula_policy=self.policy,
+                    suggested_bid_before_compression=int(round(pressure_reference)) if pressure_reference else 0,
                 )
             )
 
@@ -206,6 +239,78 @@ class FormulaBidAllocator:
         weighted_with_bids = [replace_signal(item, formula_bid=int(bids.get(item.course_id, 0))) for item in weighted]
         metrics = allocation_signal_metrics(weighted_with_bids, student.budget_initial)
         return bids, weighted_with_bids, metrics
+
+    def _allocate_advanced(
+        self,
+        *,
+        student: Student,
+        selected_course_ids: list[str],
+        baseline_bids: dict[str, int],
+        courses: dict[str, Course],
+        edges: dict[tuple[str, str], UtilityEdge],
+        requirements_by_code: dict[str, CourseRequirement],
+        derived_penalties: dict[tuple[str, str], float],
+        waitlist_context: dict[str, dict[str, int]],
+    ) -> tuple[dict[str, int], list[FormulaCourseSignal], dict[str, object]]:
+        signals: list[FormulaCourseSignal] = []
+        for course_id in selected_course_ids:
+            course = courses[course_id]
+            visible = waitlist_context.get(course_id, {})
+            m = int(visible.get("m", visible.get("observed_waitlist_count", 0)))
+            n = int(visible.get("n", course.capacity))
+            requirement = requirements_by_code.get(course.course_code)
+            requirement_pressure = float(derived_penalties.get((student.student_id, course.course_code), 0.0))
+            utility = float(edges[(student.student_id, course_id)].utility)
+            importance = classify_formula_importance(requirement, requirement_pressure, utility)
+            reference = advanced_boundary_reference(
+                m=m,
+                n=n,
+                budget=student.budget_initial,
+                remaining_budget=student.budget_initial,
+                importance_label=importance,
+                config=self.advanced_config,
+            )
+            zero_alpha = AlphaComponents(
+                base_alpha=0.0,
+                heat_alpha=0.0,
+                urgency_alpha=0.0,
+                trend_alpha=0.0,
+                noise_alpha=0.0,
+                alpha_raw=0.0,
+                alpha=0.0,
+                alpha_clipped=False,
+            )
+            signals.append(
+                FormulaCourseSignal(
+                    course_id=course_id,
+                    course_code=course.course_code,
+                    category=course.category,
+                    baseline_bid=int(baseline_bids.get(course_id, 0)),
+                    m=m,
+                    n=n,
+                    crowding_ratio=reference.crowding_ratio,
+                    utility=utility,
+                    requirement_pressure=requirement_pressure,
+                    alpha_components=zero_alpha,
+                    formula_signal_continuous=float(reference.boundary_bid_reference),
+                    formula_signal_integer_reference=reference.boundary_bid_reference,
+                    formula_pressure_reference=float(reference.suggested_bid),
+                    m_le_n_guard=reference.m_le_n_guard,
+                    clipped_by_course_cap=reference.clipped_by_course_cap,
+                    course_bid_cap=reference.single_course_cap_bid,
+                    formula_policy=self.policy,
+                    importance_label=reference.importance_label,
+                    importance_multiplier=reference.importance_multiplier,
+                    advanced_boundary_share=reference.boundary_share,
+                    advanced_boundary_bid_reference=reference.boundary_bid_reference,
+                    suggested_bid_before_compression=reference.suggested_bid,
+                    clipped_by_remaining_budget=reference.clipped_by_remaining_budget,
+                )
+            )
+        suggested = allocate_advanced_targets_with_floors(signals, baseline_bids, student.budget_initial)
+        signals_with_bids = [replace_signal(item, formula_bid=int(suggested.get(item.course_id, 0))) for item in signals]
+        metrics = allocation_signal_metrics(signals_with_bids, student.budget_initial)
+        return suggested, signals_with_bids, metrics
 
     def _with_weights(self, signals: list[FormulaCourseSignal]) -> list[FormulaCourseSignal]:
         max_formula = max((item.formula_pressure_reference for item in signals), default=0.0)
@@ -258,6 +363,24 @@ def urgency_alpha_for_time_point(time_point: int, time_points_total: int) -> flo
     if ratio >= 0.5:
         return 0.03
     return 0.0
+
+
+def classify_formula_importance(
+    requirement: CourseRequirement | None,
+    requirement_pressure: float,
+    utility: float,
+) -> str:
+    if requirement and requirement.requirement_type == "required":
+        return "required"
+    if requirement and requirement.requirement_type == "strong_elective_requirement":
+        return "strong"
+    if requirement_pressure >= 120:
+        return "required"
+    if requirement_pressure >= 60 or utility >= 88:
+        return "strong"
+    if utility < 55 and not requirement:
+        return "replaceable"
+    return "standard"
 
 
 def replace_signal(signal: FormulaCourseSignal, **updates: object) -> FormulaCourseSignal:
@@ -323,6 +446,48 @@ def largest_remainder_with_caps(
     return bids
 
 
+def allocate_advanced_targets_with_floors(
+    signals: list[FormulaCourseSignal],
+    baseline_bids: dict[str, int],
+    budget: int,
+) -> dict[str, int]:
+    targets = {item.course_id: max(0, int(item.suggested_bid_before_compression)) for item in signals}
+    if sum(targets.values()) <= budget:
+        return targets
+    floors: dict[str, int] = {}
+    weights: dict[str, float] = {}
+    for item in signals:
+        baseline = max(0, int(baseline_bids.get(item.course_id, 0)))
+        if item.importance_label == "required":
+            floor = max(1, min(baseline, item.course_bid_cap))
+            weight = 4.0
+        elif item.importance_label == "strong":
+            floor = 1
+            weight = 2.0
+        elif item.importance_label == "replaceable":
+            floor = 1
+            weight = 0.5
+        else:
+            floor = 1
+            weight = 1.0
+        floors[item.course_id] = min(floor, max(0, targets[item.course_id]))
+        weights[item.course_id] = weight * max(1.0, float(targets[item.course_id]))
+    floor_total = sum(floors.values())
+    if floor_total >= budget:
+        return largest_remainder_with_caps(
+            [(course_id, weights[course_id]) for course_id in floors],
+            floors,
+            budget,
+        )
+    remaining = budget - floor_total
+    increments = largest_remainder_with_caps(
+        [(course_id, weights[course_id]) for course_id in targets],
+        {course_id: max(0, targets[course_id] - floors[course_id]) for course_id in targets},
+        remaining,
+    )
+    return {course_id: floors[course_id] + int(increments.get(course_id, 0)) for course_id in targets}
+
+
 def allocation_signal_metrics(signals: list[FormulaCourseSignal], budget_initial: int) -> dict[str, object]:
     alpha_values = [item.alpha_components.alpha for item in signals]
     heat_values = [item.alpha_components.heat_alpha for item in signals]
@@ -330,6 +495,7 @@ def allocation_signal_metrics(signals: list[FormulaCourseSignal], budget_initial
     max_bid = max((item.formula_bid for item in signals), default=0)
     raw_pressure_total = sum(item.formula_pressure_reference for item in signals)
     return {
+        "formula_policy": signals[0].formula_policy if signals else "",
         "formula_signal_count": len(signals),
         "formula_m_le_n_guard_count": sum(1 for item in signals if item.m_le_n_guard),
         "formula_alpha_min": round(min(alpha_values), 8) if alpha_values else None,
@@ -338,6 +504,7 @@ def allocation_signal_metrics(signals: list[FormulaCourseSignal], budget_initial
         "formula_alpha_clipped_count": sum(1 for item in signals if item.alpha_components.alpha_clipped),
         "formula_heat_alpha_mean": round(sum(heat_values) / len(heat_values), 8) if heat_values else None,
         "formula_raw_signal_clipped_count": sum(1 for item in signals if item.clipped_by_course_cap),
+        "formula_remaining_budget_clipped_count": sum(1 for item in signals if item.clipped_by_remaining_budget),
         "formula_single_course_cap_hit_count": sum(1 for item in signals if item.formula_bid >= item.course_bid_cap),
         "formula_total_bid": total_bid,
         "formula_max_bid_share": round(max_bid / total_bid, 8) if total_bid else 0.0,

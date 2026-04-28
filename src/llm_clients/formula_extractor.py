@@ -152,7 +152,12 @@ def extract_formula_signals(
         m = reported_m if reported_m is not None else visible_m
         n = reported_n if reported_n is not None else visible_n
         alpha = _to_float(item.get("alpha", item.get("alpha_offset")))
-        reported_signal = _to_float(item.get("formula_signal_continuous", item.get("formula_signal")))
+        reported_signal = _to_float(
+            item.get(
+                "formula_signal_continuous",
+                item.get("formula_signal", item.get("advanced_boundary_bid_reference")),
+            )
+        )
         course_bid = _to_int(item.get("bid", item.get("final_bid")))
         action = str(item.get("action", "")).strip()
         if action and action not in FORMULA_ACTIONS:
@@ -162,7 +167,11 @@ def extract_formula_signals(
 
         computed_signal: float | None = None
         parse_status = "ok"
-        if m is None or n is None or alpha is None:
+        if m is None or n is None:
+            parse_status = "missing_inputs"
+        elif alpha is None and reported_signal is not None:
+            computed_signal = reported_signal
+        elif alpha is None:
             parse_status = "missing_inputs"
         else:
             computed_signal = compute_formula_signal(m, n, alpha)

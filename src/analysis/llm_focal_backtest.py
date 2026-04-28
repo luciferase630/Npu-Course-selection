@@ -32,6 +32,7 @@ from src.experiments.run_single_round_mvp import (
     load_formula_tool_system_prompt,
     load_tool_system_prompt,
 )
+from src.student_agents.advanced_boundary_formula import FORMULA_POLICIES, LEGACY_FORMULA_POLICY, resolve_formula_policy
 from src.llm_clients.openai_client import build_llm_client
 from src.models import BidState
 from src.student_agents.context import (
@@ -76,6 +77,7 @@ def run_backtest(
     output_dir: str | Path,
     agent: str = "openai",
     formula_prompt: bool = False,
+    formula_prompt_policy: str = LEGACY_FORMULA_POLICY,
     data_dir: str | None = None,
     seed_offset: int = 0,
     allocation_seed: int | None = None,
@@ -136,7 +138,10 @@ def run_backtest(
         current_waitlist_counts=waitlist_counts,
         state_dependent_lambda=state_lambda,
     )
-    system_prompt = load_formula_tool_system_prompt(config) if formula_prompt else load_tool_system_prompt(config)
+    formula_prompt_policy = resolve_formula_policy(formula_prompt_policy)
+    system_prompt = (
+        load_formula_tool_system_prompt(config, formula_prompt_policy) if formula_prompt else load_tool_system_prompt(config)
+    )
     max_tool_rounds = int(config.get("llm_context", {}).get("max_tool_rounds", 10))
     client = build_llm_client(agent, base_seed=base_seed)
     tool_result = client.interact(system_prompt, session, max_tool_rounds)
@@ -183,12 +188,13 @@ def run_backtest(
     waste_delta = float(llm_focal["posthoc_non_marginal_beans"]) - float(
         baseline_focal["posthoc_non_marginal_beans"]
     )
-    policy = "llm_formula_prompt" if formula_prompt else "llm_plain"
+    policy = f"llm_formula_prompt_{formula_prompt_policy}" if formula_prompt else "llm_plain"
     metrics = {
         "baseline_run_dir": str(baseline_dir),
         "data_dir": str(data_dir or paths["students"].parent),
         "focal_student_id": focal_student_id,
         "policy": policy,
+        "formula_prompt_policy": formula_prompt_policy if formula_prompt else "",
         "background_fixed": True,
         "course_selection_fixed": False,
         "replay_mode": "final_static_background_counts_excluding_focal",
@@ -309,6 +315,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--focal-student-id", required=True)
     parser.add_argument("--agent", default="openai", choices=["openai"])
     parser.add_argument("--formula-prompt", action="store_true")
+    parser.add_argument("--formula-prompt-policy", default=LEGACY_FORMULA_POLICY, choices=list(FORMULA_POLICIES))
     parser.add_argument("--output", required=True)
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--seed-offset", type=int, default=0)
@@ -327,6 +334,7 @@ def main() -> None:
         output_dir=args.output,
         agent=args.agent,
         formula_prompt=args.formula_prompt,
+        formula_prompt_policy=args.formula_prompt_policy,
         data_dir=args.data_dir,
         seed_offset=args.seed_offset,
         allocation_seed=args.allocation_seed,

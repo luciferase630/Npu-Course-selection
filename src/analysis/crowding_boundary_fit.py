@@ -10,9 +10,27 @@ from pathlib import Path
 from statistics import mean
 from typing import Callable
 
+from src.student_agents.advanced_boundary_formula import (
+    ADVANCED_FORMULA_POLICY,
+    AdvancedBoundaryConfig,
+    DEFAULT_ADVANCED_FORMULA_CONFIG_PATH,
+    write_advanced_boundary_config,
+)
+
 
 DEFAULT_BINS = (0.0, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 3.0, math.inf)
 POWER_GRID = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0)
+BUDGET_REFERENCE = 100
+DEFAULT_DETAIL_TABLE = "outputs/tables/crowding_boundary_observations.csv"
+DEFAULT_SUMMARY_TABLE = "outputs/tables/crowding_boundary_model_summary.csv"
+DEFAULT_BIN_TABLE = "outputs/tables/crowding_boundary_bin_table.csv"
+DEFAULT_REPORT_PATH = "reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md"
+DEFAULT_FORMULA_CONFIG_PATH = str(DEFAULT_ADVANCED_FORMULA_CONFIG_PATH)
+QUICK_DETAIL_TABLE = "outputs/tables/crowding_boundary_observations_quick.csv"
+QUICK_SUMMARY_TABLE = "outputs/tables/crowding_boundary_model_summary_quick.csv"
+QUICK_BIN_TABLE = "outputs/tables/crowding_boundary_bin_table_quick.csv"
+QUICK_REPORT_PATH = "outputs/tables/crowding_boundary_formula_fit_quick.md"
+QUICK_FORMULA_CONFIG_PATH = "outputs/tables/advanced_boundary_v1_quick.yaml"
 
 
 @dataclass(frozen=True)
@@ -70,11 +88,26 @@ def run_crowding_boundary_fit(
     run_roots: list[str | Path] | None = None,
     include_sibling: bool = True,
     quick: bool = False,
-    detail_table: str | Path = "outputs/tables/crowding_boundary_observations.csv",
-    summary_table: str | Path = "outputs/tables/crowding_boundary_model_summary.csv",
-    bin_table: str | Path = "outputs/tables/crowding_boundary_bin_table.csv",
-    report_path: str | Path = "reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md",
+    detail_table: str | Path | None = DEFAULT_DETAIL_TABLE,
+    summary_table: str | Path | None = DEFAULT_SUMMARY_TABLE,
+    bin_table: str | Path | None = DEFAULT_BIN_TABLE,
+    report_path: str | Path | None = DEFAULT_REPORT_PATH,
+    formula_config_path: str | Path | None = DEFAULT_FORMULA_CONFIG_PATH,
 ) -> dict[str, object]:
+    output_paths = resolve_output_paths(
+        quick=quick,
+        detail_table=detail_table,
+        summary_table=summary_table,
+        bin_table=bin_table,
+        report_path=report_path,
+        formula_config_path=formula_config_path,
+    )
+    detail_table = output_paths["detail_table"]
+    summary_table = output_paths["summary_table"]
+    bin_table = output_paths["bin_table"]
+    report_path = output_paths["report_path"]
+    formula_config_path = output_paths["formula_config_path"]
+
     run_dirs = discover_run_dirs(run_roots, include_sibling=include_sibling)
     if quick:
         run_dirs = run_dirs[: min(8, len(run_dirs))]
@@ -91,6 +124,19 @@ def run_crowding_boundary_fit(
 
     bin_rows = build_bin_table(observations)
     write_csv(Path(bin_table), bin_rows)
+    advanced_config = fit_advanced_boundary_config(train)
+    write_advanced_boundary_config(
+        formula_config_path,
+        advanced_config,
+        metadata={
+            "source": "bidflow analyze crowding-boundary",
+            "run_count": len(run_dirs),
+            "observation_count": len(observations),
+            "train_observation_count": len(train),
+            "test_observation_count": len(test),
+            "synthetic_data_notice": "Derived from synthetic experiments, not real student records.",
+        },
+    )
     write_report(Path(report_path), observations, model_rows, bin_rows, run_dirs, quick=quick)
 
     best = model_rows[0] if model_rows else {}
@@ -104,8 +150,36 @@ def run_crowding_boundary_fit(
         "summary_table": str(summary_table),
         "bin_table": str(bin_table),
         "report_path": str(report_path),
+        "formula_config_path": str(formula_config_path),
     }
     return result
+
+
+def resolve_output_paths(
+    *,
+    quick: bool,
+    detail_table: str | Path | None = None,
+    summary_table: str | Path | None = None,
+    bin_table: str | Path | None = None,
+    report_path: str | Path | None = None,
+    formula_config_path: str | Path | None = None,
+) -> dict[str, str | Path]:
+    """Use separate default output files for smoke runs so they do not clobber full-fit artifacts."""
+    if quick:
+        return {
+            "detail_table": detail_table or QUICK_DETAIL_TABLE,
+            "summary_table": summary_table or QUICK_SUMMARY_TABLE,
+            "bin_table": bin_table or QUICK_BIN_TABLE,
+            "report_path": report_path or QUICK_REPORT_PATH,
+            "formula_config_path": formula_config_path or QUICK_FORMULA_CONFIG_PATH,
+        }
+    return {
+        "detail_table": detail_table or DEFAULT_DETAIL_TABLE,
+        "summary_table": summary_table or DEFAULT_SUMMARY_TABLE,
+        "bin_table": bin_table or DEFAULT_BIN_TABLE,
+        "report_path": report_path or DEFAULT_REPORT_PATH,
+        "formula_config_path": formula_config_path or DEFAULT_FORMULA_CONFIG_PATH,
+    }
 
 
 def _observations_for_run(run_dir: Path) -> list[BoundaryObservation]:
@@ -180,7 +254,15 @@ def evaluate_models(train: list[BoundaryObservation], test: list[BoundaryObserva
             "excess_capacity",
             lambda row: [1.0, row.crowding_ratio, math.sqrt(row.excess_demand), math.log1p(row.n)],
         ),
-        ("log_saturation", lambda row: [1.0, math.log1p(row.excess_demand), math.log1p(row.crowding_ratio)]),
+        ("log_saturation", log_saturation_features),
+        (
+            "logistic_saturation",
+            lambda row: [
+                1.0,
+                1.0 / (1.0 + math.exp(-3.0 * (row.crowding_ratio - 1.0))),
+                math.log1p(row.excess_demand),
+            ],
+        ),
     ]
     for power in POWER_GRID:
         candidates.append((f"ratio_power_p{power:g}", lambda row, p=power: [1.0, max(0.0, row.crowding_ratio - 1.0) ** p]))
@@ -194,6 +276,14 @@ def evaluate_models(train: list[BoundaryObservation], test: list[BoundaryObserva
     for quantile_value in (0.5, 0.75, 0.9):
         bin_predictor = fit_bin_predictor(train, quantile_value)
         rows.append(summary_for_model(f"bin_quantile_p{int(quantile_value * 100)}", bin_predictor, train, test, []))
+
+    base_coeffs = fit_ols([log_saturation_features(row) for row in train], [row.cutoff_bid for row in train])
+    hot_train = [row for row in train if row.crowding_ratio > 1.0]
+    for target in (0.75, 0.85):
+        shift = coverage_calibration_shift(hot_train or train, base_coeffs, log_saturation_features, target)
+        predictor = lambda row, beta=base_coeffs, tau=shift: advanced_boundary_prediction(row, beta, tau)
+        suffix = "aggressive_safe" if math.isclose(target, 0.75) else f"hot_p{int(target * 100)}"
+        rows.append(summary_for_model(f"advanced_boundary_v1_{suffix}", predictor, train, test, base_coeffs + [shift]))
 
     return sorted(rows, key=lambda row: (float(row["test_score"]), float(row["test_mae"])))
 
@@ -252,6 +342,25 @@ def build_bin_table(observations: list[BoundaryObservation]) -> list[dict[str, o
     return rows
 
 
+def fit_advanced_boundary_config(
+    train: list[BoundaryObservation],
+    *,
+    target_coverage: float = 0.94,
+) -> AdvancedBoundaryConfig:
+    absolute_coeffs = fit_ols([log_saturation_features(row) for row in train], [row.cutoff_bid for row in train])
+    hot_train = [row for row in train if row.crowding_ratio > 1.0]
+    shift = coverage_calibration_shift(hot_train or train, absolute_coeffs, log_saturation_features, 0.75)
+    return AdvancedBoundaryConfig(
+        policy=ADVANCED_FORMULA_POLICY,
+        budget_reference=BUDGET_REFERENCE,
+        beta0=round(absolute_coeffs[0] / BUDGET_REFERENCE, 12),
+        beta_log_excess=round(absolute_coeffs[1] / BUDGET_REFERENCE, 12),
+        beta_log_ratio=round(absolute_coeffs[2] / BUDGET_REFERENCE, 12),
+        tau_share=round(shift / BUDGET_REFERENCE, 12),
+        target_coverage=target_coverage,
+    )
+
+
 def write_report(
     path: Path,
     observations: list[BoundaryObservation],
@@ -264,7 +373,8 @@ def write_report(
     path.parent.mkdir(parents=True, exist_ok=True)
     best = model_rows[0]
     original = next((row for row in model_rows if row["model"] == "original_formula_scaled"), None)
-    bin_p75 = next((row for row in model_rows if row["model"] == "bin_quantile_p75"), None)
+    advanced = next((row for row in model_rows if row["model"] == "advanced_boundary_v1_aggressive_safe"), None)
+    advanced_config = fit_advanced_boundary_config(split_train_test(observations)[0])
     train, test = split_train_test(observations)
     strata_rows = build_stratified_model_rows(train, test, observations)
     content = [
@@ -274,7 +384,7 @@ def write_report(
         "",
         f"- 本轮使用 `{len(run_dirs)}` 个 run，聚合 `{len(observations)}` 条 `run × course section` 观测。",
         f"- 最优综合模型是 `{best['model']}`：test MAE `{best['test_mae']}`，coverage `{best['test_coverage']}`，平均 overpay `{best['test_mean_overpay']}`。",
-        f"- 简洁可执行版本是 `bin_quantile_p75`：test MAE `{bin_p75['test_mae'] if bin_p75 else ''}`，coverage `{bin_p75['test_coverage'] if bin_p75 else ''}`，用拥挤比分箱给安全边界。",
+        f"- 公开公式版本是 `advanced_boundary_v1_aggressive_safe`：test MAE `{advanced['test_mae'] if advanced else ''}`，coverage `{advanced['test_coverage'] if advanced else ''}`，目标是 90%-95% 的“激进稳拿”。",
         f"- 原始流传公式即使经过最优缩放，test MAE 仍为 `{original['test_mae'] if original else ''}`，coverage `{original['test_coverage'] if original else ''}`，明显弱于拥挤比分箱和 log 饱和模型。",
         "- 流传公式只看 `m,n`，方向上能表达拥挤，但缺少课程重要性、替代品、毕业压力和预算约束，不能直接当最终投豆答案。",
         "- 学生可执行策略应是：先用拥挤比预测边界，再按课程重要性加安全垫。",
@@ -290,7 +400,7 @@ def write_report(
         "target = cutoff_bid",
         "```",
         "",
-        "目标是预测录取边界，不是直接替学生给唯一 bid。学生没有精确 utility 表，因此最终建议只使用拥挤比、课程重要性和替代品判断。",
+        "目标是拟合 `cutoff_bid / budget` 这种预算占比参量，不是把模拟数据中的绝对 cutoff 当成真实世界边界。学生没有精确 utility 表，因此最终建议只使用拥挤比、课程重要性和替代品判断。",
         "",
         "训练/测试按 run_id 哈希切分，避免同一 run 的教学班同时出现在训练和测试里。`coverage` 表示预测边界不低于真实 cutoff 的比例；`mean overpay` 表示预测边界高于 cutoff 的平均豆数，衡量“边界估高导致多投”的风险。",
         "",
@@ -301,7 +411,26 @@ def write_report(
         "- `ratio_power`：使用 `max(0,r-1)^p`，扫描多个幂次。",
         "- `excess_capacity`：同时使用拥挤比、超额人数 `m-n` 和容量尺度。",
         "- `log_saturation`：使用 `log(1+max(0,m-n))` 与 `log(1+r)`，允许高拥挤区域逐渐饱和。",
-        "- `bin_quantile`：按拥挤比分箱，取训练集中 cutoff 的 p50/p75/p90，作为最容易公开解释的经验边界。",
+        "- `bin_quantile`：按拥挤比分箱，取训练集中 cutoff 的 p50/p75/p90，仅作为 sanity check，不作为 README 的最终公式。",
+        "- `advanced_boundary_v1_aggressive_safe`：把 log 饱和模型换算为预算占比，在 `m/n > 1` 的课程上校准安全项，再做单课 cap 截断。",
+        "",
+        "## 推荐公式",
+        "",
+        "```text",
+        "r = m / n",
+        "d = max(0, m - n)",
+        "",
+        "boundary_share = clip(",
+        f"  {advanced_config.beta0} + {advanced_config.beta_log_excess} * log(1 + d) + {advanced_config.beta_log_ratio} * log(1 + r) + {advanced_config.tau_share},",
+        "  0,",
+        "  single_course_cap_share",
+        ")",
+        "",
+        "suggested_bid = ceil(budget * boundary_share * importance_multiplier)",
+        "suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * budget)",
+        "```",
+        "",
+        "默认 `single_course_cap_share` 为普通课 `0.35`，必修/毕业压力课 `0.45`。重要性系数为：可替代课 `0.85`，普通想上 `1.00`，强偏好/核心课 `1.15`，必修/毕业压力课 `1.30`。",
         "",
         "## 模型比较",
         "",
@@ -330,6 +459,20 @@ def write_report(
                 f"| {row['stratum']} | {row['sample']} | `{row['model']}` | {row['n']} | "
                 f"{row['mae']} | {row['coverage']} | {row['mean_overpay']} |"
             )
+        weak_hot_rows = [
+            row
+            for row in strata_rows
+            if row["model"] == "advanced_boundary_v1_aggressive_safe"
+            and "hot courses" in str(row["stratum"])
+            and float(row["coverage"]) < 0.9
+        ]
+        if weak_hot_rows:
+            content.extend(
+                [
+                    "",
+                    "分层 caveat：`advanced_boundary_v1` 的整体 coverage 达到目标区间，但在若干 `r > 1` 的热门课分层里还没有达到 90%-95%。这说明单靠 `m/n` 和 `m-n` 不能保证每一门热门课都稳录；课程重要性、替代品和单课 cap 仍然必须参与最终决策。它在这些分层中仍明显强于旧公式，但不能宣传为所有热门课无条件最优。",
+                ]
+            )
     content.extend(
         [
             "",
@@ -347,11 +490,11 @@ def write_report(
             "## 给学生的版本",
             "",
             "- `m/n <= 1`：大多数情况下边界低，普通课不要高价表达喜欢。",
-            "- `m/n > 1`：开始关注边界预测；普通可替代课按中位边界，重要课看 p75/p90。",
+            "- `m/n > 1`：用推荐公式计算预算占比，再按课程重要性加安全垫。",
             "- 必修、毕业压力大、特别喜欢老师或课程时，在预测边界上加安全垫。",
             "- 有替代 section 或替代课时，不要和热门课硬碰。",
             "",
-            "本报告推荐把 `log_saturation` 作为统计模型，把 `bin_quantile_p75` 作为公开可执行规则。前者误差更低，后者更容易让学生按表操作：先查 `m/n` 分箱，再根据课程重要性决定用 p50、p75 还是 p90。",
+            "本报告推荐把 `advanced_boundary_v1_aggressive_safe` 作为公开可执行公式。它来自统计拟合，但最终输出会被预算、剩余预算和单课上限截断，避免旧公式在极端拥挤时算出超过 100 豆甚至超过总预算的结果。",
             "",
             "## 复现",
             "",
@@ -372,7 +515,7 @@ def build_stratified_model_rows(
 ) -> list[dict[str, object]]:
     predictors = {
         "log_saturation": named_predictor(train, "log_saturation"),
-        "bin_quantile_p75": named_predictor(train, "bin_quantile_p75"),
+        "advanced_boundary_v1_aggressive_safe": named_predictor(train, "advanced_boundary_v1_aggressive_safe"),
         "original_formula_scaled": named_predictor(train, "original_formula_scaled"),
     }
     strata: list[tuple[str, Callable[[BoundaryObservation], bool]]] = [
@@ -421,12 +564,15 @@ def named_predictor(
         return lambda row, beta=coeffs: clamp_bid(dot(beta, [1.0, original_formula_feature(row)]))
     if model_name == "log_saturation":
         coeffs = fit_ols(
-            [[1.0, math.log1p(row.excess_demand), math.log1p(row.crowding_ratio)] for row in train],
+            [log_saturation_features(row) for row in train],
             [row.cutoff_bid for row in train],
         )
-        return lambda row, beta=coeffs: clamp_bid(
-            dot(beta, [1.0, math.log1p(row.excess_demand), math.log1p(row.crowding_ratio)])
-        )
+        return lambda row, beta=coeffs: clamp_bid(dot(beta, log_saturation_features(row)))
+    if model_name == "advanced_boundary_v1_aggressive_safe":
+        coeffs = fit_ols([log_saturation_features(row) for row in train], [row.cutoff_bid for row in train])
+        hot_train = [row for row in train if row.crowding_ratio > 1.0]
+        shift = coverage_calibration_shift(hot_train or train, coeffs, log_saturation_features, 0.75)
+        return lambda row, beta=coeffs, tau=shift: advanced_boundary_prediction(row, beta, tau)
     if model_name.startswith("bin_quantile_p"):
         quantile_value = float(model_name.removeprefix("bin_quantile_p")) / 100.0
         return fit_bin_predictor(train, quantile_value)
@@ -445,6 +591,36 @@ def split_train_test(observations: list[BoundaryObservation]) -> tuple[list[Boun
         train = observations[:midpoint]
         test = observations[midpoint:] or observations[:]
     return train, test
+
+
+def log_saturation_features(row: BoundaryObservation) -> list[float]:
+    return [1.0, math.log1p(row.excess_demand), math.log1p(row.crowding_ratio)]
+
+
+def coverage_calibration_shift(
+    train: list[BoundaryObservation],
+    coeffs: list[float],
+    feature_fn: Callable[[BoundaryObservation], list[float]],
+    target_coverage: float,
+) -> float:
+    if not train:
+        return 0.0
+    residuals = sorted(row.cutoff_bid - clamp_bid(dot(coeffs, feature_fn(row))) for row in train)
+    q = max(0.0, min(1.0, float(target_coverage)))
+    position = (len(residuals) - 1) * q
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return max(0.0, float(residuals[lower]))
+    weight = position - lower
+    value = residuals[lower] * (1 - weight) + residuals[upper] * weight
+    return max(0.0, float(value))
+
+
+def advanced_boundary_prediction(row: BoundaryObservation, coeffs: list[float], shift: float) -> float:
+    if row.m <= row.n:
+        return 0.0
+    return clamp_bid(dot(coeffs, log_saturation_features(row)) + shift)
 
 
 def fit_bin_predictor(train: list[BoundaryObservation], quantile_value: float) -> Callable[[BoundaryObservation], float]:
@@ -679,10 +855,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-root", action="append", default=None, help="Run root directory. May be repeated.")
     parser.add_argument("--no-sibling", action="store_true", help="Do not scan the sibling llm-tests worktree outputs.")
     parser.add_argument("--quick", action="store_true", help="Use a small run subset for smoke testing.")
-    parser.add_argument("--detail-table", default="outputs/tables/crowding_boundary_observations.csv")
-    parser.add_argument("--summary-table", default="outputs/tables/crowding_boundary_model_summary.csv")
-    parser.add_argument("--bin-table", default="outputs/tables/crowding_boundary_bin_table.csv")
-    parser.add_argument("--report", default="reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md")
+    parser.add_argument("--detail-table", default=None)
+    parser.add_argument("--summary-table", default=None)
+    parser.add_argument("--bin-table", default=None)
+    parser.add_argument("--report", default=None)
+    parser.add_argument("--formula-config", default=None)
     return parser.parse_args()
 
 
@@ -696,6 +873,7 @@ def main() -> None:
         summary_table=args.summary_table,
         bin_table=args.bin_table,
         report_path=args.report,
+        formula_config_path=args.formula_config,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

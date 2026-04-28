@@ -77,6 +77,25 @@ class FormulaExtractorTests(unittest.TestCase):
     def test_missing_formula_signals_returns_empty_list(self) -> None:
         self.assertEqual(extract_formula_signals({"tool_name": "submit_bids"}), [])
 
+    def test_extract_accepts_advanced_boundary_reference_without_alpha(self) -> None:
+        signals = extract_formula_signals(
+            {
+                "formula_signals": [
+                    {
+                        "course_id": "C1",
+                        "m": 45,
+                        "n": 30,
+                        "advanced_boundary_bid_reference": 12,
+                        "action": "followed",
+                    }
+                ]
+            },
+            budget_initial=100,
+            remaining_budget=100,
+        )
+        self.assertEqual(signals[0]["formula_signal_integer_reference"], 12)
+        self.assertFalse(signals[0]["alpha_out_of_range"])
+
     def test_reconsideration_requires_excessive_near_all_in_without_tradeoff(self) -> None:
         request = {
             "tool_name": "submit_bids",

@@ -31,6 +31,12 @@ from src.student_agents.context import (
     derive_state_dependent_lambda,
     group_requirements_by_student,
 )
+from src.student_agents.advanced_boundary_formula import (
+    ADVANCED_FORMULA_POLICY,
+    FORMULA_POLICIES,
+    LEGACY_FORMULA_POLICY,
+    resolve_formula_policy,
+)
 from src.student_agents.scripted_policies import run_scripted_policy
 from src.student_agents.tool_env import StudentSession
 from src.student_agents.validation import ValidationResult, normalize_bool, validate_decision_output
@@ -46,11 +52,20 @@ def load_tool_system_prompt(config: dict) -> str:
     return prompt_path.read_text(encoding="utf-8")
 
 
-def load_formula_tool_system_prompt(config: dict) -> str:
-    prompt_path = Path(
-        config.get("llm_context", {}).get("formula_tool_system_prompt", "prompts/formula_informed_system_prompt.md")
-    )
-    return prompt_path.read_text(encoding="utf-8")
+def load_formula_tool_system_prompt(config: dict, formula_policy: str = LEGACY_FORMULA_POLICY) -> str:
+    llm_context = config.get("llm_context", {})
+    if resolve_formula_policy(formula_policy) == ADVANCED_FORMULA_POLICY:
+        base_path = Path(llm_context.get("formula_tool_system_prompt", "prompts/formula_informed_system_prompt.md"))
+        appendix_path = Path(
+            llm_context.get(
+                "advanced_formula_tool_system_prompt",
+                "prompts/advanced_formula_informed_system_prompt.md",
+            )
+        )
+        return base_path.read_text(encoding="utf-8") + "\n\n" + appendix_path.read_text(encoding="utf-8")
+    else:
+        prompt_path = Path(llm_context.get("formula_tool_system_prompt", "prompts/formula_informed_system_prompt.md"))
+        return prompt_path.read_text(encoding="utf-8")
 
 
 def build_agent_type_by_student(
@@ -848,10 +863,12 @@ def main() -> None:
     parser.add_argument("--focal-student-ids", default=None, help="Comma-separated IDs or a text file of IDs to replace.")
     parser.add_argument("--focal-student-share", type=float, default=0.0)
     parser.add_argument("--formula-prompt", action="store_true")
+    parser.add_argument("--formula-policy", default=LEGACY_FORMULA_POLICY, choices=list(FORMULA_POLICIES))
+    parser.add_argument("--formula-prompt-policy", default=None, choices=list(FORMULA_POLICIES))
     parser.add_argument("--max-tool-rounds", type=int, default=None)
     parser.add_argument("--background-formula-share", type=float, default=0.0)
     parser.add_argument("--background-formula-exclude-student-id", default=None)
-    parser.add_argument("--background-formula-policy", default="bid_allocation_v1", choices=["bid_allocation_v1"])
+    parser.add_argument("--background-formula-policy", default=None, choices=list(FORMULA_POLICIES))
     parser.add_argument(
         "--cass-policy",
         default="cass_v2",
@@ -874,9 +891,14 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     llm_context_config = config.get("llm_context", {})
     interaction_mode = args.interaction_mode or llm_context_config.get("interaction_mode", "single_shot")
+    formula_policy = resolve_formula_policy(args.formula_policy)
+    formula_prompt_policy = resolve_formula_policy(args.formula_prompt_policy or formula_policy)
+    background_formula_policy = resolve_formula_policy(args.background_formula_policy or formula_policy)
     system_prompt = load_system_prompt(config)
     tool_system_prompt = load_tool_system_prompt(config)
-    formula_tool_system_prompt = load_formula_tool_system_prompt(config) if args.formula_prompt else tool_system_prompt
+    formula_tool_system_prompt = (
+        load_formula_tool_system_prompt(config, formula_prompt_policy) if args.formula_prompt else tool_system_prompt
+    )
     requested_agent = args.agent
     effective_agent = "behavioral" if requested_agent == "mock" else requested_agent
 
@@ -922,6 +944,7 @@ def main() -> None:
                 agent_type,
                 base_seed=seed,
                 cass_policy=args.cass_policy if agent_type == "cass" else None,
+                formula_policy=background_formula_policy if agent_type == "behavioral_formula" else None,
             )
             for agent_type in sorted(set(agent_type_by_student.values()))
             if agent_type != "scripted_policy"
@@ -1666,7 +1689,9 @@ def main() -> None:
         "background_plain_behavioral_student_count": sum(
             1 for agent_type in agent_type_by_student.values() if agent_type == "behavioral"
         ),
-        "background_formula_policy": args.background_formula_policy if background_formula_students else "",
+        "background_formula_policy": background_formula_policy if background_formula_students else "",
+        "formula_policy": formula_policy,
+        "formula_prompt_policy": formula_prompt_policy if args.formula_prompt else "",
         "cass_policy": args.cass_policy if "cass" in agent_type_by_student.values() else "",
         "background_formula_student_ids": sorted(background_formula_students),
         "agent_type_counts": dict(sorted(Counter(agent_type_by_student.values()).items())),

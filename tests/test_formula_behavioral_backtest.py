@@ -16,6 +16,7 @@ from src.analysis.formula_behavioral_backtest import (
 )
 from src.auction_mechanism.allocation import allocate_courses
 from src.models import AllocationResult, Course, CourseRequirement, Student, UtilityEdge
+from src.student_agents.advanced_boundary_formula import advanced_boundary_reference
 from src.student_agents.behavioral import BehavioralProfile
 
 
@@ -147,6 +148,44 @@ class FormulaBehavioralBacktestTests(unittest.TestCase):
         self.assertLessEqual(sum(bids.values()), 100)
         self.assertGreater(metrics["formula_raw_signal_clipped_count"], 0)
         self.assertTrue(any(item.clipped_by_course_cap for item in signals))
+
+    def test_advanced_boundary_has_no_high_signal_when_m_le_n(self) -> None:
+        low = advanced_boundary_reference(m=10, n=20, budget=100, importance_label="required")
+        self.assertEqual(low.boundary_bid_reference, 0)
+        self.assertEqual(low.suggested_bid, 1)
+        self.assertTrue(low.m_le_n_guard)
+
+    def test_advanced_boundary_is_monotone_and_capped(self) -> None:
+        medium = advanced_boundary_reference(m=30, n=20, budget=100, importance_label="standard")
+        hot = advanced_boundary_reference(m=60, n=20, budget=100, importance_label="standard")
+        required = advanced_boundary_reference(m=1000, n=1, budget=100, importance_label="required")
+        self.assertGreater(hot.boundary_bid_reference, medium.boundary_bid_reference)
+        self.assertLessEqual(hot.suggested_bid, 35)
+        self.assertLessEqual(required.suggested_bid, 45)
+
+    def test_advanced_allocator_does_not_force_full_budget_on_free_courses(self) -> None:
+        courses = {"C1": course("C1", capacity=20), "C2": course("C2", capacity=20)}
+        edges = {
+            ("S1", "C1"): UtilityEdge("S1", "C1", True, 80),
+            ("S1", "C2"): UtilityEdge("S1", "C2", True, 60),
+        }
+        allocator = FormulaBidAllocator(alpha_policy=AlphaPolicy(base_seed=1, noise_range=0.0), policy="advanced_boundary_v1")
+        bids, signals, metrics = allocator.allocate(
+            student=student(),
+            profile=profile(),
+            selected_course_ids=["C1", "C2"],
+            baseline_bids={"C1": 50, "C2": 50},
+            courses=courses,
+            edges=edges,
+            requirements_by_code={},
+            derived_penalties={},
+            waitlist_context={"C1": {"m": 5, "n": 20}, "C2": {"m": 3, "n": 20}},
+            time_point=1,
+            time_points_total=3,
+        )
+        self.assertEqual(sum(bids.values()), 2)
+        self.assertEqual(metrics["formula_policy"], "advanced_boundary_v1")
+        self.assertTrue(all(item.m_le_n_guard for item in signals))
 
     def test_largest_remainder_is_seedless_and_deterministic_under_caps(self) -> None:
         items = [("A", 3.0), ("B", 2.0), ("C", 1.0)]

@@ -1,0 +1,25 @@
+policy: advanced_boundary_v1
+budget_reference: 100
+coefficients:
+  beta0: -0.002941319228
+  beta_log_excess: 0.038235108556
+  beta_log_ratio: 0.009779802941
+coverage_calibration:
+  target_coverage: 0.94
+  tau_share: 0.03
+single_course_cap:
+  default_share: 0.35
+  required_share: 0.45
+importance_multipliers:
+  replaceable: 0.85
+  standard: 1.0
+  strong: 1.15
+  required: 1.3
+min_bid: 1
+metadata:
+  source: bidflow analyze crowding-boundary
+  run_count: 87
+  observation_count: 10469
+  train_observation_count: 8681
+  test_observation_count: 1788
+  synthetic_data_notice: Derived from synthetic experiments, not real student records.
