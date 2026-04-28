@@ -22,6 +22,7 @@
       <button class="tab" data-tab="replay" type="button">Replay</button>
       <button class="tab" data-tab="analysis" type="button">Analysis</button>
       <button class="tab" data-tab="agents" type="button">Agents</button>
+      <button class="tab" data-tab="llm" type="button">LLM 配置</button>
       <button class="tab" data-tab="files" type="button">Files</button>
     </nav>
 
@@ -287,6 +288,25 @@
             <label>Name <input name="name" value="cass" /></label>
             <button type="submit">查看</button>
           </form>
+        </div>
+      </section>
+
+      <section id="llm" class="panel">
+        <div class="grid two">
+          <form id="llmConfigForm" class="surface api-form wide" data-endpoint="/api/llm/config" data-llm-config="true">
+            <h2>LLM 本地配置</h2>
+            <p class="span-two">配置会写入仓库根目录的 .env.local，并立即提供给之后从 GUI 启动的实验。API key 不会回显，也不会进入任务日志。</p>
+            <label>API key <input id="llmApiKey" name="api_key" type="password" autocomplete="new-password" placeholder="留空表示保留已有 key" /></label>
+            <label>Model <input id="llmModel" name="model" placeholder="例如 gpt-5.4-mini 或你的服务商 model id" /></label>
+            <label>Base URL <input id="llmBaseUrl" name="base_url" placeholder="可选，例如 https://api.example.com/v1" /></label>
+            <label class="check"><input name="clear_key" type="checkbox" /> 清除已保存 API key</label>
+            <button type="submit">保存 LLM 配置</button>
+          </form>
+          <section class="surface">
+            <h2>当前状态</h2>
+            <p id="llmConfigStatus">正在读取 LLM 配置...</p>
+            <pre id="llmConfigOut" class="output"></pre>
+          </section>
         </div>
       </section>
 

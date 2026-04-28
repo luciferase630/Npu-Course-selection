@@ -9,6 +9,7 @@ import threading
 import time
 import webbrowser
 import csv
+import ipaddress
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +27,7 @@ from src.data_generation.scenarios import load_generation_scenario
 STATIC_ROOT = Path(__file__).with_name("static")
 REPO_ROOT = Path.cwd().resolve()
 MAX_PREVIEW_BYTES = 256_000
+LLM_ENV_KEYS = ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL")
 
 
 @dataclass
@@ -149,13 +151,15 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
                     "bidflow_version": "0.1.0",
                     "cwd": str(self.server.cwd),
                     "python": sys.version.split()[0],
-                    "llm_env": {
-                        "OPENAI_API_KEY": bool(os.environ.get("OPENAI_API_KEY")),
-                        "OPENAI_MODEL": bool(os.environ.get("OPENAI_MODEL")),
-                        "OPENAI_BASE_URL": bool(os.environ.get("OPENAI_BASE_URL")),
-                    },
+                    "llm_env": _llm_env_status(self.server.cwd),
                 }
             )
+            return
+        if path == "/api/llm/config":
+            if not _is_loopback_host(str(self.client_address[0])):
+                self._json_error("LLM configuration is only available from localhost", status=403)
+                return
+            self._json(_llm_config(self.server.cwd))
             return
         if path == "/api/agents":
             _load_persisted_agents()
@@ -260,6 +264,12 @@ class GuiRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/files/preview":
                 self._json(_preview_file(payload, self.server.cwd))
+                return
+            if path == "/api/llm/config":
+                if not _is_loopback_host(str(self.client_address[0])):
+                    self._json_error("LLM configuration is only available from localhost", status=403)
+                    return
+                self._json(_save_llm_config(payload, self.server.cwd))
                 return
             self._json_error(f"unknown endpoint: {path}", status=404)
         except ValueError as exc:
@@ -482,6 +492,116 @@ def _preview_file(payload: dict[str, Any], cwd: Path) -> dict[str, Any]:
     return {"ok": True, "path": str(path), "truncated": path.stat().st_size > MAX_PREVIEW_BYTES, "text": text}
 
 
+def _llm_config(cwd: Path) -> dict[str, Any]:
+    status = _llm_env_status(cwd)
+    return {
+        "ok": True,
+        "env_path": str(_llm_env_path(cwd)),
+        "api_key_present": status["OPENAI_API_KEY"],
+        "model_present": status["OPENAI_MODEL"],
+        "base_url_present": status["OPENAI_BASE_URL"],
+        "model": os.environ.get("OPENAI_MODEL", ""),
+        "base_url": os.environ.get("OPENAI_BASE_URL", ""),
+    }
+
+
+def _save_llm_config(payload: dict[str, Any], cwd: Path) -> dict[str, Any]:
+    api_key = _clean_env_value(payload.get("api_key", ""))
+    model = _clean_env_value(payload.get("model", ""))
+    base_url = _clean_env_value(payload.get("base_url", ""))
+    clear_key = _truthy(payload.get("clear_key"))
+    if not model:
+        raise ValueError("OPENAI_MODEL is required")
+    updates = {"OPENAI_MODEL": model}
+    deletions = {"OPENAI_BASE_URL"}
+    if base_url:
+        updates["OPENAI_BASE_URL"] = base_url
+        deletions.discard("OPENAI_BASE_URL")
+    if clear_key:
+        deletions.add("OPENAI_API_KEY")
+    elif api_key:
+        updates["OPENAI_API_KEY"] = api_key
+        deletions.discard("OPENAI_API_KEY")
+    path = _llm_env_path(cwd)
+    _write_env_file(path, updates, deletions)
+    for key, value in updates.items():
+        os.environ[key] = value
+    for key in deletions:
+        os.environ.pop(key, None)
+    return _llm_config(cwd) | {"message": ".env.local updated"}
+
+
+def _llm_env_status(cwd: Path) -> dict[str, bool]:
+    _load_env_file(_llm_env_path(cwd))
+    return {key: bool(os.environ.get(key)) for key in LLM_ENV_KEYS}
+
+
+def _llm_env_path(cwd: Path) -> Path:
+    return cwd.resolve() / ".env.local"
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for key, value in _read_env_values(path).items():
+        if key not in os.environ:
+            os.environ[key] = value
+
+
+def _read_env_values(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key:
+            values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _write_env_file(path: Path, updates: dict[str, str], deletions: set[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else []
+    written: set[str] = set()
+    output: list[str] = []
+    for raw_line in lines:
+        key = _env_line_key(raw_line)
+        if key in deletions:
+            continue
+        if key in updates:
+            output.append(f"{key}={updates[key]}")
+            written.add(key)
+        else:
+            output.append(raw_line)
+    for key in LLM_ENV_KEYS:
+        if key in updates and key not in written:
+            output.append(f"{key}={updates[key]}")
+    path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+
+
+def _env_line_key(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    key = stripped.split("=", 1)[0].strip()
+    return key or None
+
+
+def _clean_env_value(value: Any) -> str:
+    cleaned = str(value or "").strip()
+    if "\n" in cleaned or "\r" in cleaned:
+        raise ValueError("LLM configuration values must be single-line strings")
+    return cleaned
+
+
+def _truthy(value: Any) -> bool:
+    return value is True or str(value).lower() in {"1", "true", "yes", "on"}
+
+
 def _strategy_visual(payload: dict[str, Any]) -> dict[str, Any]:
     raw_run = str(payload.get("run", "")).strip()
     if not raw_run:
@@ -648,3 +768,10 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _is_loopback_host(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host.lower() == "localhost"

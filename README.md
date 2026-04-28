@@ -67,7 +67,7 @@ $$
 3. **边界估计公式**：把公开可见的排队人数和课程容量转成“录取边界”的预算占比估计，再用课程重要性和预算上限修正。
 4. **GUI 可视化工作台**：可以在浏览器里生成 market、跑 session/replay、查看指标，并可视化一个 run 里的 agent 构成、投豆分布、拥挤课程和某个学生的投豆策略。
 
-如果想模拟“有多少学生开始使用大模型”，可以在 session 里把固定人数或固定比例的学生替换成 LLM。例如用 `--focal-agent llm --focal-student-count 20` 替换 20 个学生，用 `--focal-agent llm --focal-student-share 0.10` 替换 10% 学生。LLM 模式只需要在本机配置好 `OPENAI_API_KEY` 和 `OPENAI_MODEL`；GUI 的 Session 页面提供同样的替换字段，但不会读取或显示 key 内容。
+如果想模拟“有多少学生开始使用大模型”，可以在 session 里把固定人数或固定比例的学生替换成 LLM。例如用 `--focal-agent llm --focal-student-count 20` 替换 20 个学生，用 `--focal-agent llm --focal-student-share 0.10` 替换 10% 学生。LLM 模式只需要在本机配置好 `OPENAI_API_KEY` 和 `OPENAI_MODEL`；GUI 现在提供 LLM 配置窗口，可以把 key/model 写入本机 `.env.local`，但不会回显 key，也不会把 key 写进任务日志。
 
 想快速理解研究怎么走到现在，先读 [研究路径总览](reports/research_path/README.md)。想看完整建模论文，读 [论文式总稿](reports/final/paper_2026-04-28_course_bidding_math_model.md)。
 
@@ -672,7 +672,7 @@ python -m bidflow gui
 
 The GUI opens a local browser page and covers the same main workflow as the CLI: market creation, validation, session runs, replay runs, analysis, agent management, and file previews.
 
-To replace part of the student population with LLM agents, use `--focal-agent llm` plus either `--focal-student-count 20` or `--focal-student-share 0.10`. LLM mode only requires local `OPENAI_API_KEY` and `OPENAI_MODEL` configuration; the GUI exposes the same cohort controls without reading or displaying key values.
+To replace part of the student population with LLM agents, use `--focal-agent llm` plus either `--focal-student-count 20` or `--focal-student-share 0.10`. LLM mode only requires local `OPENAI_API_KEY` and `OPENAI_MODEL` configuration; the GUI includes a local LLM config panel that writes `.env.local` without echoing the key or putting it into job logs.
 
 Generate a synthetic market:
 

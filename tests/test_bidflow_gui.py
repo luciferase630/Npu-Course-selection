@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,7 +12,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from bidflow.gui.server import _session_args, create_server
+from bidflow.gui.server import _is_loopback_host, _session_args, create_server
 
 
 class BidFlowGuiTests(unittest.TestCase):
@@ -76,6 +77,58 @@ class BidFlowGuiTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as raised:
                 post_json(base_url + "/api/files/preview", {"path": ".env.local"})
             self.assertEqual(raised.exception.code, 400)
+
+    def test_llm_config_endpoint_writes_env_local_without_returning_key(self) -> None:
+        old_values = {key: os.environ.get(key) for key in ["OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"]}
+        for key in old_values:
+            os.environ.pop(key, None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp, running_server(cwd=Path(tmp)) as base_url:
+                env_path = Path(tmp) / ".env.local"
+                env_path.write_text("# keep me\nOTHER_VALUE=1\n", encoding="utf-8")
+                saved = post_json(
+                    base_url + "/api/llm/config",
+                    {
+                        "api_key": "unit-test-key",
+                        "model": "unit-model",
+                        "base_url": "https://example.test/v1",
+                    },
+                )
+                self.assertTrue(saved["ok"], saved)
+                self.assertTrue(saved["api_key_present"])
+                self.assertEqual(saved["model"], "unit-model")
+                self.assertNotIn("unit-test-key", json.dumps(saved))
+                self.assertEqual(os.environ["OPENAI_API_KEY"], "unit-test-key")
+                self.assertEqual(os.environ["OPENAI_MODEL"], "unit-model")
+                loaded = get_json(base_url + "/api/llm/config")
+                self.assertTrue(loaded["api_key_present"])
+                self.assertNotIn("unit-test-key", json.dumps(loaded))
+                text = env_path.read_text(encoding="utf-8")
+                self.assertIn("# keep me", text)
+                self.assertIn("OTHER_VALUE=1", text)
+                self.assertIn("OPENAI_API_KEY=unit-test-key", text)
+
+                updated = post_json(base_url + "/api/llm/config", {"model": "next-model"})
+                self.assertTrue(updated["api_key_present"])
+                self.assertEqual(updated["model"], "next-model")
+                self.assertIn("OPENAI_API_KEY=unit-test-key", env_path.read_text(encoding="utf-8"))
+
+                cleared = post_json(base_url + "/api/llm/config", {"model": "next-model", "clear_key": True})
+                self.assertFalse(cleared["api_key_present"])
+                self.assertNotIn("OPENAI_API_KEY=", env_path.read_text(encoding="utf-8"))
+                self.assertNotIn("OPENAI_API_KEY", os.environ)
+        finally:
+            for key, value in old_values.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_llm_config_loopback_guard_helper(self) -> None:
+        self.assertTrue(_is_loopback_host("127.0.0.1"))
+        self.assertTrue(_is_loopback_host("::1"))
+        self.assertTrue(_is_loopback_host("localhost"))
+        self.assertFalse(_is_loopback_host("192.0.2.1"))
 
     def test_gui_api_runs_minimal_market_session_and_replay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, running_server() as base_url:
@@ -150,8 +203,11 @@ class BidFlowGuiTests(unittest.TestCase):
 
 
 class running_server:
+    def __init__(self, cwd: Path | None = None) -> None:
+        self.cwd = cwd
+
     def __enter__(self) -> str:
-        self.server = create_server(port=0)
+        self.server = create_server(port=0, cwd=self.cwd)
         host, port = self.server.server_address
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

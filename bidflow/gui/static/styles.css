@@ -144,6 +144,7 @@ form.wide {
 form h2,
 form button,
 form .check,
+form .span-two,
 form label:has(textarea) {
   grid-column: 1 / -1;
 }

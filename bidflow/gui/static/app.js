@@ -65,6 +65,11 @@ async function submitForm(event) {
     if (form.dataset.visual === "strategy" && result.visual) {
       renderStrategyVisual(result.visual);
     }
+    if (form.dataset.llmConfig === "true") {
+      const keyField = form.querySelector('input[name="api_key"]');
+      if (keyField) keyField.value = "";
+      await Promise.all([loadHealth(), loadLlmConfig()]);
+    }
     if (result.job_id) {
       await pollJob(result.job_id);
     } else {
@@ -184,7 +189,30 @@ async function loadHealth() {
   const data = await api("/api/health");
   const env = data.llm_env || {};
   document.getElementById("health").textContent =
-    `${data.cwd} · Python ${data.python} · LLM key ${env.OPENAI_API_KEY ? "detected" : "not detected"}`;
+    `${data.cwd} · Python ${data.python} · LLM key ${env.OPENAI_API_KEY ? "detected" : "not detected"} · model ${env.OPENAI_MODEL ? "detected" : "missing"} · base URL ${env.OPENAI_BASE_URL ? "custom" : "default"}`;
+}
+
+async function loadLlmConfig() {
+  const status = document.getElementById("llmConfigStatus");
+  const outputEl = document.getElementById("llmConfigOut");
+  if (!status || !outputEl) return;
+  const data = await api("/api/llm/config");
+  const model = document.getElementById("llmModel");
+  const baseUrl = document.getElementById("llmBaseUrl");
+  if (model && !model.value) model.value = data.model || "";
+  if (baseUrl && !baseUrl.value) baseUrl.value = data.base_url || "";
+  status.textContent =
+    `API key: ${data.api_key_present ? "已配置" : "未配置"} · Model: ${data.model_present ? "已配置" : "未配置"} · Base URL: ${data.base_url_present ? "自定义" : "默认"}`;
+  outputEl.textContent = JSON.stringify(
+    {
+      env_path: data.env_path,
+      api_key_present: data.api_key_present,
+      model: data.model || "",
+      base_url: data.base_url || "",
+    },
+    null,
+    2,
+  );
 }
 
 async function loadScenarios() {
@@ -216,7 +244,7 @@ async function boot() {
   bindTabs();
   bindForms();
   try {
-    await Promise.all([loadHealth(), loadScenarios(), loadAgents(), refreshJobs()]);
+    await Promise.all([loadHealth(), loadScenarios(), loadAgents(), refreshJobs(), loadLlmConfig()]);
   } catch (error) {
     print({ ok: false, error: String(error.message || error) });
   }
