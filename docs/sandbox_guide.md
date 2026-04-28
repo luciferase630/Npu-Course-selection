@@ -719,8 +719,9 @@ outputs/runs/my_medium_behavioral/
 ├── allocations.csv
 ├── budgets.csv
 ├── utilities.csv
+├── llm_traces.jsonl
+├── llm_model_outputs.jsonl
 ├── llm_decision_explanations.jsonl
-├── traces/
 ├── bidflow_metadata.json
 ├── population.yaml
 └── experiment.yaml
@@ -814,6 +815,50 @@ outputs/runs/my_medium_behavioral/
 | `net_total_utility` | legacy 净效用口径 |
 
 主报告优先看 `course_outcome_utility`，不要把 legacy `net_total_utility` 当主结论。
+
+### 7.7 实验日志和 LLM 竞技场日志在哪
+
+如果你想复盘“这个 agent 当时看到了什么、为什么这么投、工具有没有拒绝它”，主要看这几类日志：
+
+| 文件 | 适合看什么 |
+| --- | --- |
+| `llm_traces.jsonl` | 每个学生每个 time point 的完整交互轨迹：system prompt、学生私有上下文、市场状态、最终输出、每轮 attempts |
+| `llm_model_outputs.jsonl` | 每一次模型或 agent attempt 的原始输出、解析后工具请求、解释、公式信号、provider metadata、token usage、工具结果 |
+| `llm_decision_explanations.jsonl` | 每次最终采用决策的简化解释，适合快速读“它为什么这样投” |
+| `bid_events.csv` | 最终落到市场状态里的动作：加豆、减豆、撤课、保留 |
+| `decisions.csv` | 截止时最终投豆，开奖真正读取的是这个 |
+| `allocations.csv` | 开奖结果和录取边界 |
+
+这里的文件名保留了 `llm_` 前缀，但不只对 LLM 有用。behavioral、CASS 这类非 LLM agent 也会留下兼容格式的 trace，只是里面的 `raw_model_content` 不是 API 模型原始文本，而是本地 agent 生成的结构化输出。
+
+如果你说“让大模型模拟竞技场”，通常要看三层：
+
+1. **决策前它看到什么**：看 `llm_traces.jsonl` 里的 `system_prompt`、`student_private_context`、`state_snapshot`。
+2. **它实际返回了什么**：看 `llm_model_outputs.jsonl` 里的 `raw_model_content`、`parsed_model_output`、`decision_explanation`。
+3. **工具/规则怎么处理它的输出**：看 `tool_result_status`、`tool_result_feasible`、`validation_result`、`final_output`，再对照 `bid_events.csv`。
+
+重要边界：这些日志记录的是模型可见输入、模型返回的可见 JSON/解释、工具调用结果和校验结果。它们不是隐藏思维链，也不应该被描述成模型内部真实思考过程。要研究“模型为什么这样投”，优先引用 `decision_explanation`、`formula_signals`、`attempts`、`tool_result` 和最终动作，而不是声称读到了模型私有推理。
+
+PowerShell 快速看第一条 trace：
+
+```powershell
+Get-Content outputs/runs/my_medium_s001_llm/llm_traces.jsonl -TotalCount 1
+```
+
+快速看某个学生的模型输出：
+
+```powershell
+Get-Content outputs/runs/my_medium_s001_llm/llm_model_outputs.jsonl |
+  Select-String '"student_id":"S001"'
+```
+
+固定背景 LLM replay 的日志文件名略有不同：
+
+| 文件 | 说明 |
+| --- | --- |
+| `llm_focal_backtest_metrics.json` | replay 指标 |
+| `llm_focal_backtest_decisions.jsonl` | LLM 最终给 focal student 的课程和投豆 |
+| `llm_focal_backtest_tool_trace.json` | LLM replay 的工具调用轨迹 |
 
 ## 8. Replay：固定背景回放
 
