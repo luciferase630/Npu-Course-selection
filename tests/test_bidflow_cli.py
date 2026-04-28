@@ -85,6 +85,45 @@ class UnitExternalAgent(BaseAgent):
         boundary_help = self.run_cli("analyze", "crowding-boundary", "--help")
         self.assertEqual(boundary_help.returncode, 0, boundary_help.stderr)
         self.assertIn("--summary-table", boundary_help.stdout)
+        market_create_help = self.run_cli("market", "create", "--help")
+        self.assertEqual(market_create_help.returncode, 0, market_create_help.stderr)
+        self.assertIn("--students", market_create_help.stdout)
+
+    def test_market_create_generates_complete_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            market_dir = Path(tmp) / "easy_market"
+            create = self.run_cli(
+                "market",
+                "create",
+                "--output",
+                str(market_dir),
+                "--students",
+                "12",
+                "--sections",
+                "30",
+                "--profiles",
+                "3",
+                "--seed",
+                "123",
+            )
+            self.assertEqual(create.returncode, 0, create.stderr)
+            for filename in (
+                "profiles.csv",
+                "profile_requirements.csv",
+                "students.csv",
+                "courses.csv",
+                "student_course_code_requirements.csv",
+                "student_course_utility_edges.csv",
+                "generation_metadata.json",
+                "bidflow_metadata.json",
+            ):
+                self.assertTrue((market_dir / filename).exists(), filename)
+            validate = self.run_cli("market", "validate", str(market_dir))
+            self.assertEqual(validate.returncode, 0, validate.stderr)
+            metadata = json.loads((market_dir / "bidflow_metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["command"], "market create")
+            self.assertEqual(metadata["effective_parameters"]["students"], 12)
+            self.assertEqual(metadata["effective_parameters"]["sections"], 30)
 
     def test_sensitivity_grid_has_distinct_policy_families(self) -> None:
         self.assertGreaterEqual(len(POLICY_SWEEP), 6)

@@ -4,6 +4,14 @@ The synthetic dataset generator is now driven by YAML scenarios. The old `--pres
 
 这份文档是给“想生成新数据”的人看的。最重要的原则是：**不要直接改生成器主体代码，先改 YAML 场景。**
 
+如果只是想按规模生成一份完整数据集，不需要读完本页，直接用：
+
+```powershell
+bidflow market create my_market --students 200 --sections 120 --profiles 5
+```
+
+这个命令会同时生成学生表、课程表、培养方案、学生课程要求和偏好表。本页后面的 YAML 场景用于更细粒度地控制课程分布和竞争结构。
+
 ## Built-in scenarios
 
 ```text

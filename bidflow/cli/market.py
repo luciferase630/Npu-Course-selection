@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from src.data_generation.generate_synthetic_mvp import default_course_code_count
 from src.data_generation.scenarios import load_generation_scenario
 
 from bidflow.core.market import Market
@@ -19,12 +20,33 @@ SCENARIOS = {
     "research_large_medium": Path("configs/generation/research_large_medium.yaml"),
     "research_large_sparse_hotspots": Path("configs/generation/research_large_sparse_hotspots.yaml"),
 }
+SIZE_PRESETS = {
+    "tiny": {"students": 30, "sections": 40, "profiles": 3},
+    "small": {"students": 100, "sections": 80, "profiles": 4},
+    "medium": {"students": 300, "sections": 120, "profiles": 5},
+    "large": {"students": 800, "sections": 240, "profiles": 6},
+}
 
 
 def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("market", help="Generate and inspect markets.")
     market_subparsers = parser.add_subparsers(dest="market_command", required=True)
     market_subparsers.add_parser("scenarios", help="List built-in scenarios.")
+
+    create = market_subparsers.add_parser(
+        "create",
+        help="Create a complete synthetic market with simple size parameters.",
+    )
+    create.add_argument("name", nargs="?", default=None, help="Market name under data/synthetic when --output is omitted.")
+    create.add_argument("--output", "-o", default=None)
+    create.add_argument("--size", choices=list(SIZE_PRESETS), default="small")
+    create.add_argument("--students", type=int, default=None)
+    create.add_argument("--sections", type=int, default=None)
+    create.add_argument("--profiles", type=int, default=None)
+    create.add_argument("--course-codes", type=int, default=None)
+    create.add_argument("--competition-profile", default="high", choices=["high", "medium", "sparse_hotspots"])
+    create.add_argument("--seed", type=int, default=None)
+    create.add_argument("--config", default="configs/simple_model.yaml")
 
     generate = market_subparsers.add_parser("generate", help="Generate a market dataset.")
     generate.add_argument("--scenario", required=True)
@@ -57,7 +79,13 @@ def run(args: argparse.Namespace) -> int:
                 f"{name:<34} {scenario.n_students:>8} {scenario.n_course_sections:>8} "
                 f"{scenario.n_profiles:>8} {scenario.competition_profile}"
             )
+        print("\nSimple sizes for `bidflow market create`:")
+        print(f"{'SIZE':<10} {'STUDENTS':>8} {'SECTIONS':>8} {'PROFILES':>8}")
+        for name, preset in SIZE_PRESETS.items():
+            print(f"{name:<10} {preset['students']:>8} {preset['sections']:>8} {preset['profiles']:>8}")
         return 0
+    if args.market_command == "create":
+        return _run_create(args)
     if args.market_command == "generate":
         scenario_path = _resolve_scenario(args.scenario)
         command = [
@@ -77,7 +105,7 @@ def run(args: argparse.Namespace) -> int:
                 command.extend(["--" + flag.replace("_", "-"), str(value)])
         result = subprocess.run(command, check=False)
         if result.returncode == 0:
-            _write_market_metadata(Path(args.output), args, scenario_path)
+            _write_market_metadata(Path(args.output), args, scenario_path=scenario_path, command_name="generate")
         return result.returncode
     if args.market_command == "validate":
         market = Market.load(args.market)
@@ -97,6 +125,66 @@ def run(args: argparse.Namespace) -> int:
     raise SystemExit(f"unknown market command: {args.market_command}")
 
 
+def _run_create(args: argparse.Namespace) -> int:
+    preset = SIZE_PRESETS[args.size]
+    students = args.students if args.students is not None else preset["students"]
+    sections = args.sections if args.sections is not None else preset["sections"]
+    profiles = args.profiles if args.profiles is not None else preset["profiles"]
+    try:
+        course_codes = args.course_codes if args.course_codes is not None else default_course_code_count(sections, profiles)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    output = Path(args.output) if args.output else Path("data/synthetic") / (args.name or f"bidflow_{args.size}")
+    command = [
+        sys.executable,
+        "-m",
+        "src.data_generation.generate_synthetic_mvp",
+        "--config",
+        args.config,
+        "--preset",
+        "custom",
+        "--output-dir",
+        str(output),
+        "--n-students",
+        str(students),
+        "--n-course-sections",
+        str(sections),
+        "--n-profiles",
+        str(profiles),
+        "--n-course-codes",
+        str(course_codes),
+        "--competition-profile",
+        args.competition_profile,
+    ]
+    if args.seed is not None:
+        command.extend(["--seed", str(args.seed)])
+    result = subprocess.run(command, check=False)
+    if result.returncode != 0:
+        return result.returncode
+    effective = {
+        "size": args.size,
+        "students": students,
+        "sections": sections,
+        "profiles": profiles,
+        "course_codes": course_codes,
+        "competition_profile": args.competition_profile,
+        "seed": args.seed,
+    }
+    _write_market_metadata(output, args, scenario_path=None, command_name="create", effective_parameters=effective)
+    print(
+        "\nCreated complete BidFlow market:\n"
+        f"  output: {output}\n"
+        f"  students: {students}\n"
+        f"  course sections: {sections}\n"
+        f"  profiles: {profiles}\n"
+        f"  course codes: {course_codes}\n"
+        "  included CSVs: students, courses, profiles, requirements, preference edges\n\n"
+        f"Next: bidflow market validate {output}\n"
+        f"Then: bidflow market info {output}"
+    )
+    return 0
+
+
 def _resolve_scenario(value: str) -> Path:
     if value in SCENARIOS:
         return SCENARIOS[value]
@@ -106,14 +194,24 @@ def _resolve_scenario(value: str) -> Path:
     raise SystemExit(f"unknown scenario: {value}")
 
 
-def _write_market_metadata(output: Path, args: argparse.Namespace, scenario_path: Path) -> None:
+def _write_market_metadata(
+    output: Path,
+    args: argparse.Namespace,
+    *,
+    scenario_path: Path | None,
+    command_name: str,
+    effective_parameters: dict | None = None,
+) -> None:
     output.mkdir(parents=True, exist_ok=True)
     metadata = {
         "bidflow_version": "0.1.0",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "scenario": args.scenario,
-        "scenario_path": str(scenario_path),
-        "seed": args.seed,
+        "command": f"market {command_name}",
+        "scenario": getattr(args, "scenario", None),
+        "scenario_path": str(scenario_path) if scenario_path is not None else "",
+        "size": getattr(args, "size", None),
+        "seed": getattr(args, "seed", None),
         "output": str(output),
+        "effective_parameters": effective_parameters or {},
     }
     (output / "bidflow_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")

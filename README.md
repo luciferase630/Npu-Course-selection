@@ -364,10 +364,10 @@ python -m bidflow --help
 
 ### 1. 生成合成市场
 
-这一步生成 `research_large_high` 高竞争市场。它不是现实教务数据，而是用来复现实验的合成学生、课程、培养方案和偏好表。
+这一步按 `large` 规模生成完整合成市场。它不是现实教务数据，而是用来复现实验的合成学生、课程、培养方案和偏好表。
 
 ```powershell
-bidflow market generate --scenario research_large_high --output data/synthetic/research_large
+bidflow market create research_large --size large
 bidflow market validate data/synthetic/research_large
 ```
 
@@ -645,7 +645,7 @@ python -m bidflow --help
 Generate a synthetic market:
 
 ```powershell
-bidflow market generate --scenario research_large_high --output data/synthetic/research_large
+bidflow market create research_large --size large
 bidflow market validate data/synthetic/research_large
 ```
 

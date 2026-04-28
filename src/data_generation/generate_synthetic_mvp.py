@@ -185,7 +185,7 @@ def build_shape(
         raise ValueError("n_course_codes must not exceed n_course_sections")
     if course_codes < minimum_course_code_count(profile_count):
         raise ValueError(f"n_course_codes={course_codes} is below minimum {minimum_course_code_count(profile_count)}")
-    return GenerationShape("custom", students, course_sections, profile_count, course_codes)
+    return GenerationShape("custom", students, course_sections, profile_count, course_codes, competition_profile=competition_profile)
 
 
 def build_smoke_dataset(seed: int) -> dict[str, object]:
@@ -1624,7 +1624,14 @@ def main() -> None:
         dataset = build_synthetic_dataset(seed, shape)
         preset_label = shape.scenario_name or args.preset
     else:
-        shape = build_shape("custom", args.n_students, args.n_course_sections, args.n_profiles, args.n_course_codes)
+        shape = build_shape(
+            "custom",
+            args.n_students,
+            args.n_course_sections,
+            args.n_profiles,
+            args.n_course_codes,
+            competition_profile=args.competition_profile or "high",
+        )
         dataset = build_synthetic_dataset(seed, shape)
         preset_label = args.preset
     root = Path(args.output_dir) if args.output_dir else default_output_dir_for_preset(args.preset, seed, shape)

@@ -242,6 +242,49 @@ P001,Computer Science,Computer
 
 ## 4. 生成 Market
 
+如果你只是想要一套“能跑起来”的完整数据集，用最短命令：
+
+```powershell
+bidflow market create my_market --size small
+```
+
+这会生成：
+
+```text
+data/synthetic/my_market/
+├── profiles.csv
+├── profile_requirements.csv
+├── students.csv
+├── courses.csv
+├── student_course_code_requirements.csv
+├── student_course_utility_edges.csv
+├── generation_metadata.json
+└── bidflow_metadata.json
+```
+
+也就是说，学生表、课程表、培养方案、学生课程要求和偏好表都会一起生成，不需要手写 CSV。
+
+指定规模：
+
+```powershell
+bidflow market create my_200x120 `
+  --students 200 `
+  --sections 120 `
+  --profiles 5 `
+  --seed 20260428
+```
+
+常用简化规模：
+
+| size | 学生 | 教学班 | 培养方案 | 用途 |
+| --- | ---: | ---: | ---: | --- |
+| `tiny` | 30 | 40 | 3 | 极快试跑 |
+| `small` | 100 | 80 | 4 | 新手默认 |
+| `medium` | 300 | 120 | 5 | 中等实验 |
+| `large` | 800 | 240 | 6 | 接近当前 research_large |
+
+一句话：**`market create` 是傻瓜入口，`market generate --scenario` 是研究入口。**
+
 先看内置场景：
 
 ```powershell

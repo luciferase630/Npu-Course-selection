@@ -4,7 +4,7 @@
 
 ```powershell
 python -m pip install -e .
-bidflow market generate --scenario research_large_high --output data/synthetic/research_large
+bidflow market create research_large --size large
 bidflow session run --market data/synthetic/research_large --population "background=behavioral" --run-id research_large_800x240x3_behavioral --time-points 3
 bidflow replay run --baseline outputs/runs/research_large_800x240x3_behavioral --focal S048 --agent cass --data-dir data/synthetic/research_large --output outputs/runs/research_large_s048_cass_backtest
 bidflow analyze crowding-boundary --quick
