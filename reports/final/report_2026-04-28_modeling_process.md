@@ -242,6 +242,7 @@ bidflow analyze cass-sensitivity --quick
 - [可复现实验入口](../../docs/reproducible_experiments.md)
 - [BidFlow 沙盒指南](../../docs/sandbox_guide.md)
 - [生成器场景说明](../../docs/generator_scenarios.md)
+- [研究路径总览](../research_path/README.md)
 
 ## 12. 报告阅读顺序
 
@@ -254,3 +255,5 @@ bidflow analyze cass-sensitivity --quick
 5. [策略公开后的二阶博弈报告](../interim/report_2026-04-28_public_strategy_diffusion_game.md)
 
 历史推进报告保留为实验轨迹，不代表当前最终措辞。
+
+如果只想知道项目如何从流传公式一路走到 BidFlow、CASS、进阶边界公式和二阶博弈，建议读 [研究路线图](../research_path/research_journey.md)；如果想避免误读旧报告，先读 [走过的弯路与修正](../research_path/wrong_turns_and_lessons.md)。

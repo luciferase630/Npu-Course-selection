@@ -12,6 +12,15 @@
 
 这些合成数据的作用是搭一个结构上接近现实的沙盒，用来比较策略和检验公式，而不是声称复刻某个真实教务系统。
 
+## 这个项目最重要的产出
+
+不是一个保证现实必胜的公式，而是两件事：
+
+1. **BidFlow 沙盒**：可以生成合成选课市场、跑普通学生/LLM/CASS/公式策略、做固定背景 replay 和统计分析。
+2. **投豆思路**：用公开可见的拥挤比 `m/n` 估计竞争压力，再按课程重要性、预算 cap 和尾数习惯做调整。
+
+想快速理解研究怎么走到现在，先读 [研究路径总览](reports/research_path/README.md)。想看完整建模过程，读 [投豆选课建模过程报告](reports/final/report_2026-04-28_modeling_process.md)。
+
 ## 流传公式的问题
 
 本项目评估的“流传公式”是：
@@ -151,6 +160,7 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 
 ## 最新报告
 
+- [研究路径总览：路线、建模入口、弯路修正](reports/research_path/README.md)
 - [投豆选课建模过程报告](reports/final/report_2026-04-28_modeling_process.md)
 - [报告阅读索引](reports/README.md)
 - [进阶拥挤比公式与 LLM/BA 对照报告](reports/interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)
