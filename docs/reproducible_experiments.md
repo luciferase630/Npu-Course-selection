@@ -140,11 +140,29 @@ python -m src.experiments.run_single_round_mvp `
 需要先配置 OpenAI-compatible 环境变量：
 
 ```powershell
-$env:OPENAI_API_KEY="..."
-$env:OPENAI_MODEL="..."
+$env:OPENAI_API_KEY="<your_api_key>"
+$env:OPENAI_MODEL="<your_model>"
 # 可选：
-$env:OPENAI_BASE_URL="..."
+$env:OPENAI_BASE_URL="https://your-openai-compatible-endpoint/v1"
 ```
+
+也可以把同样的变量放在仓库根目录 `.env.local`。代码会自动读取 `.env.local`，但这个文件只留在本机，不能提交。
+
+必填项：
+
+| 环境变量 | 含义 |
+| --- | --- |
+| `OPENAI_API_KEY` | API key |
+| `OPENAI_MODEL` | 模型 ID |
+
+常用可选项：
+
+| 环境变量 | 含义 |
+| --- | --- |
+| `OPENAI_BASE_URL` | OpenAI-compatible 服务地址；官方 OpenAI 默认可不填 |
+| `OPENAI_WIRE_API` | `chat_completions` 或 `responses` |
+| `OPENAI_TEMPERATURE` | 温度 |
+| `OPENAI_TIMEOUT_SECONDS` | 超时时间 |
 
 在线 focal：
 
