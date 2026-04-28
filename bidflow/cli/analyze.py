@@ -25,6 +25,14 @@ def add_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     sensitivity.add_argument("--oat-summary-table", default="outputs/tables/cass_sensitivity_oat_summary.csv")
     sensitivity.add_argument("--config", default="configs/simple_model.yaml")
     sensitivity.add_argument("--quick", action="store_true", help="Run one background and one focal for smoke testing.")
+    boundary = analyze_subparsers.add_parser("crowding-boundary", help="Fit m/n crowding-ratio formulas for cutoff bids.")
+    boundary.add_argument("--run-root", action="append", default=None, help="Run root directory. May be repeated.")
+    boundary.add_argument("--no-sibling", action="store_true", help="Do not scan the sibling llm-tests worktree outputs.")
+    boundary.add_argument("--quick", action="store_true", help="Use a small run subset for smoke testing.")
+    boundary.add_argument("--detail-table", default="outputs/tables/crowding_boundary_observations.csv")
+    boundary.add_argument("--summary-table", default="outputs/tables/crowding_boundary_model_summary.csv")
+    boundary.add_argument("--bin-table", default="outputs/tables/crowding_boundary_bin_table.csv")
+    boundary.add_argument("--report", default="reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -51,6 +59,20 @@ def run(args: argparse.Namespace) -> int:
             oat_summary_table=args.oat_summary_table,
             config_path=args.config,
             quick=args.quick,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.analyze_command == "crowding-boundary":
+        from src.analysis.crowding_boundary_fit import run_crowding_boundary_fit
+
+        result = run_crowding_boundary_fit(
+            run_roots=args.run_root,
+            include_sibling=not args.no_sibling,
+            quick=args.quick,
+            detail_table=args.detail_table,
+            summary_table=args.summary_table,
+            bin_table=args.bin_table,
+            report_path=args.report,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

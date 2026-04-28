@@ -1,177 +1,133 @@
 # 西工大的选课公式，是个骗局吗？
 
-先把话说清楚：这里不是说某个具体学校、具体同学或具体学长在骗人。标题里的“骗局”指的是一种常见幻觉：只要拿到一个投豆公式，学生就能机械算出最优投豆数。
+先说边界：这里不是说某个具体学校、具体同学或具体学长在骗人。标题里的“骗局”指的是一种常见幻觉：只要拿到一个投豆公式，学生就能机械算出最优投豆数。
 
-本项目做的是一个可复现的投豆选课沙盒。我们把“流传公式”、普通行为学生、LLM 学生和 CASS 规则算法放进同一个合成选课市场里比较，核心结论是：
+这个项目做的是一个可复现的投豆选课沙盒。我们生成了结构上贴近现实的合成选课市场，包括学生、培养方案、必修压力、课程容量、热门课、冷门课、时间冲突、老师/课程偏好和不同类型的行为学生。它不是教务真实数据，但用于回答一个很现实的问题：
 
-**公式有用，但不是答案。它更像拥挤信号，不是个人最优投豆定理。真正有用的策略是先看竞争边界，再判断这门课值不值得追价。**
+**投豆选课时，怎么估计录取边界，怎么避免在没竞争的课上当“怨种”？**
 
-## 说的是哪个公式？
+核心结论很短：
 
-本项目评估的是下面这个流传投豆公式：
+1. 流传公式有用，但它只是拥挤信号，不是最终投豆答案。
+2. 更稳定的做法是先看拥挤比 `r = m/n`，估计录取边界，再按课程重要性加安全垫。
+3. 必修课、毕业压力、特别喜欢的老师/课程值得加价；普通可替代课不要用高价表达喜欢。
+4. 在我们的合成实验里，拥挤比衍生的边界规则明显优于原公式缩放版；CASS-v2 也比机械套公式更稳。
 
-```text
-f(m, n, α) = (1 + α) * sqrt(m - n) * exp(m / n)
-```
-<img width="767" height="191" alt="image" src="https://github.com/user-attachments/assets/d60151dd-8bb7-4e3a-81a4-a574f08510c4" />
+## 流传公式
 
+本项目评估的“流传公式”是：
+
+$$
+f(m,n,\alpha)=(1+\alpha)\sqrt{m-n}\,e^{m/n}
+$$
+
+<img width="767" height="191" alt="投豆公式截图" src="https://github.com/user-attachments/assets/d60151dd-8bb7-4e3a-81a4-a574f08510c4" />
 
 符号解释：
 
 - `m`：当前可见的排队/待选人数。
 - `n`：课程容量。
-- `α`：人为选择的浮动偏移，本项目按 `[-0.25, 0.30]` 处理，所以乘数 `1 + α` 在 `[0.75, 1.30]`。
+- `alpha`：人为选择的浮动偏移；我们按 `[-0.25, 0.30]` 看待这个浮动。
 
-重要边界：
+这个公式最大的问题不是“完全没用”，而是**只看 `m,n`**。它没有看这门课对你是不是必修、是不是影响毕业、有没有替代 section、你还有多少预算、你是不是真的特别想上这位老师的课。
 
-- 当 `m <= n` 时，`sqrt(m - n)` 在实数范围没有拥挤意义；现实解释应是“暂时没有明显竞争压力”，不该仅凭公式高投。
-- 公式只看 `m` 和 `n`，没有看课程对你的重要性、替代课、时间冲突、预算、轮次和整数投豆约束。
-- 所以它可以是 cutoff/拥挤度参考，但很难是所有学生的通用最优投豆公式。
+所以它可以提醒你“这门课挤不挤”，但不能直接替你决定“该投多少豆”。
 
-对真实学生来说，最有用的不是精确计算 `f`，而是先看：
+## 我们怎么做实验
 
-```text
-排队比 = m / n
-```
-
-`m/n` 很低时少投；接近满员时轻保护；明显超载时才考虑为必修、核心课或强偏好课加码。
-
-## 选课规则是什么？
-
-本仓库模拟的是 all-pay 式投豆选课市场：
-
-- 每个学生有固定豆子预算，例如 `100`。
-- 学生可以选择若干教学班并给每个教学班投非负整数豆。
-- 每个教学班有容量 `n`。
-- 如果申请人数不超过容量，申请者都录取。
-- 如果申请人数超过容量，按投豆数从高到低录取；边界同分用固定随机种子抽签。
-- 学生必须满足硬约束：学分上限、时间冲突、同一 course code 只能选一个 section。
-- 本项目的福利指标不扣豆子，因为豆子是 use-it-or-lose-it 预算；但会单独统计“有没有当怨种”。
-
-主要结果指标：
-
-```text
-course_outcome_utility = gross_liking_utility + completed_requirement_value
-```
-
-这只是沙盒里的研究评价口径。真实学生没有精确 utility 表，通常只有模糊偏好。因此公开建议不能写成“请计算每门课 utility”，而应写成：
-
-```text
-先看 m/n，再按课程重要性粗分层。
-必修/核心 > 强烈想上 > 一般想上 > 可替代 > 纯凑学分
-```
-
-豆子诊断指标：
-
-- `rejected_wasted_beans`：投了但没录的豆子。
-- `admitted_excess_bid_total`：录取后高于 cutoff 的超额豆子。
-- `posthoc_non_marginal_beans`：事后看没有改变录取结果的豆子。
-- `bid_concentration_hhi`：投豆是否过度集中。
-
-## 我们做了什么？
-
-这个仓库现在包含两层东西：
-
-1. **研究实验**：生成合成学生、培养方案、课程容量、偏好和选课行为，比较不同策略在同一市场中的结果。
-2. **BidFlow 沙盒平台**：把生成市场、运行 session、固定背景 replay、结果分析包装成 CLI，方便别人复现实验或写自己的 agent。
-
-主要策略：
+我们在合成市场里比较了几类策略：
 
 | 策略 | 含义 |
 | --- | --- |
-| Behavioral Agent (BA) | 模拟普通学生，带不同 persona/risk 风格 |
-| Formula BA | 先按普通 BA 选课，再用流传公式重分配豆子 |
-| LLM plain | 让 LLM 在工具约束下正常选课投豆 |
-| LLM + formula | 给 LLM 公式，让它把公式当参考信号 |
-| CASS | 纯规则算法，目标是给定市场下让某个 focal student 的课程结果更好，同时减少无效多投 |
+| BA | 模拟普通学生，带不同 persona 和风险偏好 |
+| Formula BA | 普通学生先选课，再用流传公式重分配豆子 |
+| LLM | 让大模型在工具约束下选课投豆 |
+| LLM + formula | 把流传公式给大模型当参考信号 |
+| CASS | 纯规则算法，目标是给定市场下让某个学生选得更好、少浪费豆子 |
 
-CASS 全称是 `Competition-Adaptive Selfish Selector`。它不是机制设计，也不是全市场福利优化；它研究的是“给定其他人怎么投，我这个学生怎么做更好”的单智能体最优响应问题。
+我们定义了一个内部效用指标来比较策略：它衡量学生是否拿到喜欢且重要的课，其中重要性包括必修课、毕业压力、培养方案要求、课程/老师偏好等。这个效用只用于沙盒研究，不要求真实学生精确计算。
 
-## 当前核心结果
-
-### 1. 公式单独用，不一定更好
-
-在 `research_large` 高竞争市场中，S048 的四臂实验结果：
-
-| Arm | Selected | Admitted | Utility | Beans | Rejected waste | HHI |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| BA baseline | 7 | 3 | 987.0 | 100 | 33 | 0.1868 |
-| BA + formula allocation | 7 | 3 | 344.25 | 100 | 56 | 0.1448 |
-| LLM plain | 9 | 8 | 1701.5 | 100 | 6 | 0.1752 |
-| LLM + formula prompt | 9 | 9 | 1847.5 | 96 | 0 | 0.1285 |
-
-解释：公式没有解决“选哪些课”的问题。如果课程组合本身不好，只换投豆分配也可能更差。
-
-### 2. LLM + formula 强在不照抄公式
-
-LLM 拿到公式后，并不是机械按公式投：
-
-- `FND001-C` 公式参考约 `54`，LLM + formula 只投 `14`，刚好压过 cutoff `13`。
-- `ENG001-D` 公式参考约 `8`，LLM 投 `8`，温和信号下接近公式。
-- `PE001-B` 公式参考约 `9`，LLM 只投 `4`，因为 PE 是 optional。
-- `MCO006-A` 在 mix30 市场里 cutoff 为 `0`，LLM plain 投 `30`，LLM + formula 降到 `12`。
-
-这说明公式最有价值的地方是提醒“拥挤程度”，而不是直接给最终 bid。
-
-### 3. CASS-v2 是当前最稳规则 baseline
-
-我们把 CASS 扩展成 `6` 个策略族，并做了 `4` 个背景市场 × `4` 个 focal students 的 fixed-background replay：
-
-| Policy | Avg utility | Avg delta vs BA | Beans | Rejected waste | Non-marginal | Robust score |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **`cass_v2`** | **2262.39** | **811.27** | 51.13 | 2.50 | 42.19 | **736.46** |
-| `cass_smooth` | 2256.27 | 805.16 | 59.69 | 5.00 | 44.13 | 727.35 |
-| `cass_logit` | 2226.95 | 775.84 | 48.31 | 2.50 | 41.81 | 701.24 |
-| `cass_value` | 2217.63 | 766.51 | **37.81** | **0.00** | **33.13** | 697.85 |
-| `cass_v1` | 2182.95 | 731.83 | 61.50 | 8.31 | 50.50 | 633.68 |
-| `cass_frontier` | 2040.13 | 589.01 | 30.94 | 2.50 | 26.56 | 478.30 |
-
-结论：
-
-- `cass_v2` 是默认强 baseline，平均 utility 最高且稳健。
-- `cass_value` 是最“不当怨种”的版本，拒录浪费为 `0`，豆子花得少，但平均 utility 略低。
-- `cass_frontier` 证明“只省豆”不是目标，省过头会损失课程结果。
-
-### 4. 敏感度分析不是装饰
-
-为了避免 CASS 变成另一个拍脑袋公式，我们做了 one-at-a-time 敏感度分析。核心发现：
-
-- 合理提高单课上限、提高 price penalty、提高 optional-hot penalty，不会推翻 `cass_v2` 的结论。
-- 单课上限过低会明显伤害 utility。
-- price penalty 过低会让策略重新变得浪费豆子。
-
-复现入口：
-
-```powershell
-bidflow analyze cass-sensitivity
-```
-
-详细报告见：
-
-- `reports/interim/report_2026-04-28_cass_v2_policy_sweep.md`
-- `reports/interim/report_2026-04-28_cass_sensitivity_analysis.md`
-
-## 给学生的可操作版本
-
-不要把本仓库的 `utility` 当成现实可计算指标。真实选课时更可操作的是：
+真实学生更应该记住的是：
 
 ```text
-一看 m/n：
-  m/n 远小于 1：低价试探，别多付
-  m/n 接近 1：可能满员，轻保护
-  m/n 明显大于 1：已经拥挤，只为重要课加码
-
-二看课的重要性：
-  必修/核心 > 强烈想上 > 一般想上 > 可替代 > 纯凑学分
-
-三看替代品：
-  热门但可替代，就换 section 或换课
-  无竞争但很喜欢，也不要用高价表达喜欢
+先估边界，再决定值不值得追。
 ```
 
-这才是 CASS 对现实最有启发的部分：不是“算出神秘最优豆数”，而是用 `m/n` 猜价格边界，用粗偏好判断值不值得追。
+## 拥挤比边界
 
-## 快速开始
+我们把所有实验输出汇总成 `run × 教学班` 观测，用 `r = m/n` 预测真实录取边界 `cutoff_bid`。本轮使用 `87` 个 run、`10469` 个教学班观测。
+
+模型比较结果：
+
+| 规则 | Test MAE | Coverage | 含义 |
+| --- | ---: | ---: | --- |
+| log 饱和模型 | **0.94** | 88.4% | 统计误差最低 |
+| 拥挤比分箱 p75 | 1.31 | **93.0%** | 最适合公开执行 |
+| 原公式缩放版 | 4.58 | 72.4% | 明显更差 |
+
+这里的 `Coverage` 表示预测边界不低于真实 cutoff 的比例。`p75` 分箱规则不是最精细的模型，但它简单、稳健、好解释。
+
+可执行版本如下：
+
+| 拥挤比 `m/n` | 中位边界 p50 | 安全边界 p75 | 高安全边界 p90 |
+| --- | ---: | ---: | ---: |
+| `< 1.0` | 0 | 0 | 0 |
+| `1.0 - 1.2` | 6 | 8 | 12 |
+| `1.2 - 1.5` | 8 | 13 | 15 |
+| `1.5 - 2.0` | 10 | 12 | 15 |
+| `2.0 - 3.0` | 16 | 22 | 28.5 |
+| `>= 3.0` | 14 | 17 | 18.4 |
+
+怎么用：
+
+- 普通可替代课：看 p50 或更低，不要硬追。
+- 重要但有替代的课：看 p75。
+- 必修、毕业压力大、特别想上且替代很差的课：才考虑 p90 或额外安全垫。
+- `m/n < 1` 时，绝大多数课程边界是 0；这时高投往往只是浪费。
+
+完整统计细节见 [拥挤比边界公式拟合报告](reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md)。
+
+## CASS 的发现
+
+CASS 是 `Competition-Adaptive Selfish Selector`，不是多智能体博弈算法，也不是全市场福利优化。它解决的是单个学生的最优响应问题：
+
+```text
+给定其他人怎么投，我这个学生怎么选课和投豆，才能拿到更高结果并减少无效多投？
+```
+
+我们测试了至少 6 种 CASS 策略族，并做了敏感度分析，避免只靠拍脑袋调分段阈值。当前最稳的是 `cass_v2`：它不把豆子平均撒出去，而是用拥挤信号、课程重要性和替代性一起决定是否追价。
+
+重要发现：
+
+- 只省豆不是目标；省过头会损失好课。
+- 只追热门也不是目标；很多低竞争课 1 豆就够。
+- 好策略应该先保证课程结果，再减少拒录浪费和明显过度投豆。
+
+相关报告：
+
+- [CASS 策略族与敏感度分析](reports/interim/report_2026-04-28_cass_sensitivity_analysis.md)
+- [CASS 多学生回测](reports/interim/report_2026-04-28_cass_multifocal_llm_batch.md)
+- [拥挤比边界公式拟合报告](reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md)
+
+## 给学生的简洁策略
+
+```text
+第一步：看拥挤比
+  m/n < 1：通常别多投
+  m/n 接近或略大于 1：轻保护
+  m/n 明显大于 1：才进入真正竞争
+
+第二步：看课程重要性
+  必修/毕业压力 > 核心强需求 > 特别喜欢 > 一般想上 > 可替代课
+
+第三步：看替代品
+  有替代 section 或替代课，就不要和大热课死磕
+  没竞争但很喜欢，也不要用高价表达喜欢
+```
+
+一句话：**先用 `m/n` 猜边界，再用课程重要性决定安全垫。**
+
+## 快速复现
 
 安装本地开发版：
 
@@ -180,17 +136,17 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python -m pip install -e .
-bidflow --help
+python -m bidflow --help
 ```
 
-生成一个市场：
+生成合成市场：
 
 ```powershell
 bidflow market generate --scenario research_large_high --output data/synthetic/research_large
 bidflow market validate data/synthetic/research_large
 ```
 
-运行 behavioral baseline：
+运行 baseline：
 
 ```powershell
 bidflow session run `
@@ -200,7 +156,7 @@ bidflow session run `
   --time-points 3
 ```
 
-固定背景回测 S048 的 CASS：
+回测 CASS：
 
 ```powershell
 bidflow replay run `
@@ -212,6 +168,12 @@ bidflow replay run `
   --output outputs/runs/research_large_s048_cass_replay
 ```
 
+拟合拥挤比边界：
+
+```powershell
+bidflow analyze crowding-boundary
+```
+
 跑 CASS 策略族与敏感度分析：
 
 ```powershell
@@ -219,53 +181,15 @@ bidflow analyze cass-sensitivity --quick
 bidflow analyze cass-sensitivity
 ```
 
-旧的 `python -m src.*` 命令仍然保留，迁移说明见 `docs/legacy_entrypoints.md`。完整平台使用说明见 `docs/sandbox_guide.md`。
-
-## 代码结构
+## 项目结构
 
 ```text
 bidflow/     新 CLI 和平台包装层：agent / market / session / replay / analyze
-configs/     实验配置和数据生成 YAML 场景
-data/        数据目录；合成数据通过命令生成，不提交大 CSV
-docs/        复现说明、平台指南、旧入口映射
-prompts/     LLM 与 formula prompt 模板
-reports/     阶段性实验报告和审阅记录
-scripts/     常用复现实验 PowerShell 脚本
-spec/        设计规格文档
-src/         旧实验引擎和兼容实现
-tests/       单元测试和回归测试
-outputs/     实验输出目录；默认不入库
+src/         兼容旧入口和核心实验实现
+configs/     生成器、模型和场景配置
+docs/        使用说明和复现实验
+reports/     interim/final/reviews 报告
+tests/       单元测试与 CLI smoke tests
 ```
 
-关键文件：
-
-- `src/llm_clients/formula_extractor.py`：公式信号提取与边界分类。
-- `src/student_agents/formula_bid_policy.py`：公式投豆 allocator。
-- `src/student_agents/cass.py`：CASS 策略族。
-- `src/analysis/cass_policy_sensitivity.py`：策略族与敏感度分析。
-- `bidflow/cli/*.py`：公开 CLI。
-
-## 数据和输出
-
-仓库默认不提交生成数据和实验输出：
-
-- `data/synthetic/*`
-- `data/processed/*`
-- `outputs/runs/*`
-- `outputs/tables/*`
-- `outputs/figures/*`
-- `outputs/llm_traces/*`
-
-保留这些目录下的 `README.md` 是为了说明用途。真正的 CSV 和 JSON 结果通过命令生成。
-
-## 当前边界
-
-- 当前数据是合成数据，不是任何真实教务系统导出的学生隐私数据。
-- CASS 是强规则 baseline，不是数学意义上的全局最优解。
-- 当前优化的是单个 focal student 的 selfish outcome，不优化学校整体公平性或机制设计。
-- `bidflow` v1 仍大量复用旧 `src` 引擎，完整插件化 session engine 还在迁移中。
-- 真实学生没有精确 utility 表；公开建议应围绕 `m/n` 和课程重要性粗分层。
-
-## License
-
-MIT。
+生成数据和实验输出默认不入库；请在本地用命令复现。

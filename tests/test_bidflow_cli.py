@@ -12,6 +12,7 @@ from bidflow.agents.context import CourseInfo
 from bidflow.agents.registry import load_external_agent
 from bidflow.core.population import Population
 from src.analysis.cass_policy_sensitivity import POLICY_SWEEP, oat_sensitivity_cases
+from src.analysis.crowding_boundary_fit import collect_boundary_observations, evaluate_models
 
 
 class BidFlowCliTests(unittest.TestCase):
@@ -81,11 +82,52 @@ class UnitExternalAgent(BaseAgent):
         sensitivity_help = self.run_cli("analyze", "cass-sensitivity", "--help")
         self.assertEqual(sensitivity_help.returncode, 0, sensitivity_help.stderr)
         self.assertIn("--quick", sensitivity_help.stdout)
+        boundary_help = self.run_cli("analyze", "crowding-boundary", "--help")
+        self.assertEqual(boundary_help.returncode, 0, boundary_help.stderr)
+        self.assertIn("--summary-table", boundary_help.stdout)
 
     def test_sensitivity_grid_has_distinct_policy_families(self) -> None:
         self.assertGreaterEqual(len(POLICY_SWEEP), 6)
         self.assertIn("cass_logit", POLICY_SWEEP)
         self.assertGreaterEqual(len(oat_sensitivity_cases()), 10)
+
+    def test_crowding_boundary_fit_uses_m_n_and_cutoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run_a"
+            run_dir.mkdir()
+            (run_dir / "decisions.csv").write_text(
+                "\n".join(
+                    [
+                        "run_id,experiment_group,student_id,course_id,agent_type,script_policy_name,selected,bid,observed_capacity,observed_waitlist_count_final",
+                        "run_a,E,S1,C1,behavioral,,true,5,2,3",
+                        "run_a,E,S2,C1,behavioral,,true,3,2,3",
+                        "run_a,E,S3,C1,behavioral,,true,1,2,3",
+                        "run_a,E,S1,C2,behavioral,,true,1,3,1",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "allocations.csv").write_text(
+                "\n".join(
+                    [
+                        "run_id,experiment_group,course_id,student_id,bid,admitted,cutoff_bid,tie_break_used",
+                        "run_a,E,C1,S1,5,true,3,false",
+                        "run_a,E,C1,S2,3,true,3,false",
+                        "run_a,E,C1,S3,1,false,3,false",
+                        "run_a,E,C2,S1,1,true,0,false",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            observations = collect_boundary_observations([run_dir])
+        by_course = {row.course_id: row for row in observations}
+        self.assertEqual(by_course["C1"].m, 3)
+        self.assertEqual(by_course["C1"].n, 2)
+        self.assertEqual(by_course["C1"].cutoff_bid, 3.0)
+        self.assertEqual(by_course["C2"].cutoff_bid, 0.0)
+        summary = evaluate_models(observations, observations)
+        self.assertTrue(summary)
+        self.assertIn("test_mae", summary[0])
 
     def test_market_generate_validate_session_and_replay_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
