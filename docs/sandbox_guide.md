@@ -269,10 +269,32 @@ data/synthetic/my_market/
 ```powershell
 bidflow market create my_200x120 `
   --students 200 `
-  --sections 120 `
-  --profiles 5 `
+  --classes 120 `
+  --majors 5 `
   --seed 20260428
 ```
+
+这里 `--classes` 就是教学班数量，等价于旧参数 `--sections`；`--majors` 是培养方案数量，等价于 `--profiles`。如果你不填 `--majors` 和 `--codes`，BidFlow 会按规模自动推导。
+
+想先看会生成什么，但不写文件：
+
+```powershell
+bidflow market create my_200x120 `
+  --students 200 `
+  --classes 120 `
+  --dry-run
+```
+
+想生成后顺便跑完整审计：
+
+```powershell
+bidflow market create my_200x120 `
+  --students 200 `
+  --classes 120 `
+  --audit
+```
+
+`--audit` 会比普通 `market validate` 慢一些，但会检查更多生成质量问题。日常试跑先用默认生成，再手动 `market validate` 即可。
 
 常用简化规模：
 
@@ -284,6 +306,8 @@ bidflow market create my_200x120 `
 | `large` | 800 | 240 | 6 | 接近当前 research_large |
 
 一句话：**`market create` 是傻瓜入口，`market generate --scenario` 是研究入口。**
+
+如果参数不合法，BidFlow 会尽量告诉你怎么改。例如教学班太少但培养方案太多时，它会提示调大 `--classes` 或调小 `--majors`。
 
 先看内置场景：
 
@@ -683,26 +707,26 @@ BidFlow 的 LLM agent 使用 OpenAI-compatible API。也就是说，只要服务
 临时配置 PowerShell 环境变量：
 
 ```powershell
-$env:OPENAI_API_KEY="<your_api_key>"
-$env:OPENAI_MODEL="<your_model>"
-$env:OPENAI_BASE_URL="https://your-openai-compatible-endpoint/v1"
+$env:OPENAI_API_KEY = Read-Host "Paste your OpenAI-compatible API key"
+$env:OPENAI_MODEL = "your_model"
+$env:OPENAI_BASE_URL = "https://your-openai-compatible-endpoint/v1"
 ```
 
-更推荐放到仓库根目录的 `.env.local`，因为代码会自动读取这个文件：
+更推荐放到仓库根目录的 `.env.local`，因为代码会自动读取这个文件。实际写文件时按 `变量名=变量值` 的格式；下面只列变量名和值的含义，不在仓库里写出 key 示例：
 
 ```text
-OPENAI_API_KEY=<your_api_key>
-OPENAI_MODEL=<your_model>
-OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
+OPENAI_API_KEY    paste your key locally
+OPENAI_MODEL      your_model
+OPENAI_BASE_URL   https://your-openai-compatible-endpoint/v1
 ```
 
 `.env.local` 只留在本机，不能提交。提交前用 `git status --short` 确认它没有进入暂存区。
 
-如果使用官方 OpenAI endpoint，通常可以不写 `OPENAI_BASE_URL`：
+如果使用官方 OpenAI endpoint，通常可以不写 `OPENAI_BASE_URL`。实际 `.env.local` 仍按 `变量名=变量值` 写：
 
 ```text
-OPENAI_API_KEY=<your_api_key>
-OPENAI_MODEL=<your_model>
+OPENAI_API_KEY    paste your key locally
+OPENAI_MODEL      your_model
 ```
 
 可选高级变量：
@@ -719,10 +743,10 @@ OPENAI_MODEL=<your_model>
 如果你想配备用 provider，可以加 `OPENAI_FALLBACK_1_` 前缀：
 
 ```text
-OPENAI_FALLBACK_1_API_KEY=<fallback_api_key>
-OPENAI_FALLBACK_1_MODEL=<fallback_model>
-OPENAI_FALLBACK_1_BASE_URL=https://fallback-openai-compatible-endpoint/v1
-OPENAI_FALLBACK_1_PROVIDER_NAME=fallback_provider
+OPENAI_FALLBACK_1_API_KEY        paste fallback key locally
+OPENAI_FALLBACK_1_MODEL          fallback_model
+OPENAI_FALLBACK_1_BASE_URL       https://fallback-openai-compatible-endpoint/v1
+OPENAI_FALLBACK_1_PROVIDER_NAME  fallback_provider
 ```
 
 运行 LLM focal online：

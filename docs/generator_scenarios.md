@@ -7,10 +7,10 @@ The synthetic dataset generator is now driven by YAML scenarios. The old `--pres
 如果只是想按规模生成一份完整数据集，不需要读完本页，直接用：
 
 ```powershell
-bidflow market create my_market --students 200 --sections 120 --profiles 5
+bidflow market create my_market --students 200 --classes 120 --majors 5
 ```
 
-这个命令会同时生成学生表、课程表、培养方案、学生课程要求和偏好表。本页后面的 YAML 场景用于更细粒度地控制课程分布和竞争结构。
+这个命令会同时生成学生表、课程表、培养方案、学生课程要求和偏好表。`--classes` 等价于教学班数量，`--majors` 等价于培养方案数量。不确定参数是否合理时，可以先加 `--dry-run`。本页后面的 YAML 场景用于更细粒度地控制课程分布和竞争结构。
 
 ## Built-in scenarios
 

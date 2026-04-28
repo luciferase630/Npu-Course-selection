@@ -4,7 +4,7 @@
 
 ```powershell
 python -m pip install -e .
-bidflow market create research_large --size large
+bidflow market create research_large --students 800 --classes 240 --majors 6 --codes 154
 bidflow session run --market data/synthetic/research_large --population "background=behavioral" --run-id research_large_800x240x3_behavioral --time-points 3
 bidflow replay run --baseline outputs/runs/research_large_800x240x3_behavioral --focal S048 --agent cass --data-dir data/synthetic/research_large --output outputs/runs/research_large_s048_cass_backtest
 bidflow analyze crowding-boundary --quick
@@ -48,7 +48,19 @@ python -m bidflow --help
 
 ## 2. 生成数据
 
-高竞争主数据集：
+普通沙盒优先用简单入口。`--students` 是学生数，`--classes` 是教学班数，`--majors` 是培养方案数；不确定时先加 `--dry-run`。
+
+```powershell
+bidflow market create research_large `
+  --students 800 `
+  --classes 240 `
+  --majors 6 `
+  --codes 154
+
+bidflow market validate data/synthetic/research_large
+```
+
+严格复现历史研究场景时，也可以继续使用 YAML scenario。高竞争主数据集：
 
 ```powershell
 python -m src.data_generation.generate_synthetic_mvp `
@@ -140,10 +152,10 @@ python -m src.experiments.run_single_round_mvp `
 需要先配置 OpenAI-compatible 环境变量：
 
 ```powershell
-$env:OPENAI_API_KEY="<your_api_key>"
-$env:OPENAI_MODEL="<your_model>"
+$env:OPENAI_API_KEY = Read-Host "Paste your OpenAI-compatible API key"
+$env:OPENAI_MODEL = "your_model"
 # 可选：
-$env:OPENAI_BASE_URL="https://your-openai-compatible-endpoint/v1"
+$env:OPENAI_BASE_URL = "https://your-openai-compatible-endpoint/v1"
 ```
 
 也可以把同样的变量放在仓库根目录 `.env.local`。代码会自动读取 `.env.local`，但这个文件只留在本机，不能提交。

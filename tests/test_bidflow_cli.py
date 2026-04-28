@@ -88,6 +88,11 @@ class UnitExternalAgent(BaseAgent):
         market_create_help = self.run_cli("market", "create", "--help")
         self.assertEqual(market_create_help.returncode, 0, market_create_help.stderr)
         self.assertIn("--students", market_create_help.stdout)
+        self.assertIn("--classes", market_create_help.stdout)
+        self.assertIn("--majors", market_create_help.stdout)
+        self.assertIn("--codes", market_create_help.stdout)
+        self.assertIn("--dry-run", market_create_help.stdout)
+        self.assertIn("--audit", market_create_help.stdout)
 
     def test_market_create_generates_complete_dataset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -99,9 +104,9 @@ class UnitExternalAgent(BaseAgent):
                 str(market_dir),
                 "--students",
                 "12",
-                "--sections",
+                "--classes",
                 "30",
-                "--profiles",
+                "--majors",
                 "3",
                 "--seed",
                 "123",
@@ -124,6 +129,42 @@ class UnitExternalAgent(BaseAgent):
             self.assertEqual(metadata["command"], "market create")
             self.assertEqual(metadata["effective_parameters"]["students"], 12)
             self.assertEqual(metadata["effective_parameters"]["sections"], 30)
+            edge_rows = (market_dir / "student_course_utility_edges.csv").read_text(encoding="utf-8-sig").splitlines()
+            self.assertEqual(len(edge_rows) - 1, 12 * 30)
+
+    def test_market_create_dry_run_does_not_write_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            market_dir = Path(tmp) / "dry_market"
+            result = self.run_cli(
+                "market",
+                "create",
+                "--output",
+                str(market_dir),
+                "--students",
+                "12",
+                "--classes",
+                "30",
+                "--majors",
+                "3",
+                "--dry-run",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("dry-run", result.stdout)
+            self.assertIn('"students": 12', result.stdout)
+            self.assertFalse(market_dir.exists())
+
+    def test_market_create_rejects_invalid_manual_shape(self) -> None:
+        result = self.run_cli("market", "create", "--classes", "10", "--majors", "6", "--dry-run")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("调大 --classes", result.stderr + result.stdout)
+
+    def test_market_create_size_preset_still_works(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            market_dir = Path(tmp) / "tiny_market"
+            result = self.run_cli("market", "create", "tiny_market", "--size", "tiny", "--output", str(market_dir))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((market_dir / "students.csv").exists())
+            self.assertTrue((market_dir / "student_course_utility_edges.csv").exists())
 
     def test_sensitivity_grid_has_distinct_policy_families(self) -> None:
         self.assertGreaterEqual(len(POLICY_SWEEP), 6)
