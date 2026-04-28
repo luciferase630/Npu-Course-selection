@@ -179,6 +179,26 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 
 ## 快速复现
 
+这套命令不是随便跑几个参数，而是在复现一个最小实验链：
+
+1. 生成一个合成选课市场。
+2. 先跑 **BA baseline**：所有学生都按普通 Behavioral Agent 行动，得到一个背景市场。
+3. 再做 **fixed-background replay**：固定其他学生不变，只把某个 focal student 的策略换成 CASS 或公式策略，看这个学生有没有变好。
+
+常见 baseline 含义：
+
+| 名称 | 含义 | 回答的问题 |
+| --- | --- | --- |
+| `behavioral` / BA baseline | 所有人都是普通行为学生，有不同 persona 和风险偏好 | 如果没人用特殊策略，市场长什么样 |
+| `formula` baseline | 固定选课或固定背景后，只用公式分配豆子 | 公式本身有没有改善投豆 |
+| `cass` baseline | 用 CASS-v2 这类规则策略替换 focal student | 纯规则算法能不能打败普通学生和公式 |
+| `llm` / `llm+formula` | 让大模型用工具选课投豆，可额外给公式 prompt | 大模型是否会用公式作为决策 scaffold |
+| `mix30` market | 背景学生中 30% 使用公式，其余保持 BA | 当部分人知道公式后，竞争环境怎么变 |
+
+`replay` 的意思是：其他学生的 bids 固定，只替换 focal student。这对应“给定市场下某个人的单智能体最优响应”，不能和 full online simulation 混着硬比。
+
+安装与入口：
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -189,20 +209,60 @@ python -m bidflow --help
 
 完整建模过程见 [投豆选课建模过程报告](reports/final/report_2026-04-28_modeling_process.md)，完整命令链见 [可复现实验入口](docs/reproducible_experiments.md)。
 
-生成合成市场：
+### 1. 生成合成市场
+
+这一步生成 `research_large_high` 高竞争市场。它不是现实教务数据，而是用来复现实验的合成学生、课程、培养方案和偏好表。
 
 ```powershell
 bidflow market generate --scenario research_large_high --output data/synthetic/research_large
 bidflow market validate data/synthetic/research_large
 ```
 
-拟合进阶公式：
+### 2. 跑 BA baseline 背景市场
+
+这一步让所有学生都按普通 Behavioral Agent 选课投豆，输出路径会作为后续 replay 的 `--baseline`。
+
+```powershell
+bidflow session run `
+  --market data/synthetic/research_large `
+  --population "background=behavioral" `
+  --run-id research_large_800x240x3_behavioral `
+  --time-points 3
+```
+
+得到的基线目录：
+
+```text
+outputs/runs/research_large_800x240x3_behavioral
+```
+
+它代表“没有 focal 特殊策略介入时，普通学生市场的最终 bids、allocation 和 metrics”。
+
+### 3. 拟合拥挤比边界公式
+
+这一步从已有 run 中统计 `m/n`、超额需求和真实 cutoff 的关系，比较旧公式与新公式，输出预测误差、coverage 和 overpay。
 
 ```powershell
 bidflow analyze crowding-boundary
 ```
 
-运行固定背景 replay：
+### 4. CASS fixed-background replay
+
+这一步固定 BA baseline 中其他所有学生不变，只把 `S048` 换成 CASS-v2。它回答：“在同一个背景市场里，CASS 是否让 S048 更好？”
+
+```powershell
+bidflow replay run `
+  --baseline outputs/runs/research_large_800x240x3_behavioral `
+  --focal S048 `
+  --agent cass `
+  --policy cass_v2 `
+  --data-dir data/synthetic/research_large `
+  --output outputs/runs/research_large_s048_cass_backtest
+```
+
+### 5. 公式 fixed-background replay
+
+这一步同样固定其他学生，只让 `S048` 使用进阶公式投豆。它回答：“公式作为投豆规则本身，比 BA baseline 好不好？”
 
 ```powershell
 bidflow replay run `
