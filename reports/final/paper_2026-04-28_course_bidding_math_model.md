@@ -11,23 +11,23 @@
 
 本文围绕这一问题构建 BidFlow 合成选课市场沙盒，模拟学生、课程、培养方案、偏好、热门课和冷门课共存的结构，系统比较普通行为 Agent、公式 Agent、LLM Agent 和 CASS 规则策略。我们把“约 30% 学生知道公式”作为实验场景，研究公式作为公共信号时是否会改变市场，而不把该比例写成真实调查结论。
 
-研究发现：第一，网传公式可以作为拥挤信号，但不能直接作为最终投豆答案；它在 $m\le n$ 时缺乏合理定义，在 $m/n$ 较大时会出现预算爆炸。第二，将目标从“预测绝对录取边界”改为“预测预算占比”后，可以得到更稳健的进阶拥挤比边界公式。第三，CASS-v2 通过连续压力响应和价值-成本选择，在多场景、多 focal student 回测中优于早期硬分段策略。第四，LLM 使用公式时的优势并非机械套公式，而是把公式当作决策脚手架，学会克制、分散和寻找替代。第五，当投豆策略公开后，市场会进入二阶博弈：少数人知道策略时优势明显，很多人知道后热门课录取边界会被重新抬高。
+研究发现：第一，网传公式可以作为拥挤信号，但不能直接作为最终投豆答案；它在 `m <= n` 时缺乏合理定义，在 `m/n` 较大时会出现预算爆炸。第二，将目标从“预测绝对录取边界”改为“预测预算占比”后，可以得到更稳健的进阶拥挤比边界公式。第三，CASS-v2 通过连续压力响应和价值-成本选择，在多场景、多 focal student 回测中优于早期硬分段策略。第四，LLM 使用公式时的优势并非机械套公式，而是把公式当作决策脚手架，学会克制、分散和寻找替代。第五，当投豆策略公开后，市场会进入二阶博弈：少数人知道策略时优势明显，很多人知道后热门课录取边界会被重新抬高。
 
-本文最终给出的不是现实“保录公式”，而是一套建模框架：用 $m/n$ 识别竞争压力，用课程重要性决定是否加安全垫，用预算 cap 防止 all-in，用尾数修正处理现实投豆习惯，并用 BidFlow 沙盒检验策略在不同竞争强度下的表现。
+本文最终给出的不是现实“保录公式”，而是一套建模框架：用 `m/n` 识别竞争压力，用课程重要性决定是否加安全垫，用预算 cap 防止 all-in，用尾数修正处理现实投豆习惯，并用 BidFlow 沙盒检验策略在不同竞争强度下的表现。
 
 **关键词**：投豆选课；非对称信息；all-pay auction；拥挤比；录取边界；合成数据；CASS；LLM；策略扩散
 
 ## English Abstract
 
-This paper studies course bidding as an asymmetric-information all-pay auction. Students have limited bidding budgets and can observe course capacity and visible demand, but cannot observe other students' bids or the final admission cutoff. We build BidFlow, a synthetic course-bidding sandbox, to compare behavioral agents, formula-based agents, LLM agents, and CASS rule-based strategies. The central result is that the rumored formula is useful as a crowding signal, but fails as a direct bidding rule. We replace absolute cutoff tables with a calibrated boundary-share model based on the crowding ratio $m/n$ and excess demand $\max(0,m-n)$, then apply importance multipliers and budget caps. In synthetic backtests, the advanced boundary model substantially improves cutoff prediction over the original formula, while CASS-v2 provides a strong non-LLM selfish-response baseline. The paper emphasizes that all data are synthetic and the resulting formula is a modeling scaffold, not a real-world guarantee.
+This paper studies course bidding as an asymmetric-information all-pay auction. Students have limited bidding budgets and can observe course capacity and visible demand, but cannot observe other students' bids or the final admission cutoff. We build BidFlow, a synthetic course-bidding sandbox, to compare behavioral agents, formula-based agents, LLM agents, and CASS rule-based strategies. The central result is that the rumored formula is useful as a crowding signal, but fails as a direct bidding rule. We replace absolute cutoff tables with a calibrated boundary-share model based on the crowding ratio `m/n` and excess demand `max(0,m-n)`, then apply importance multipliers and budget caps. In synthetic backtests, the advanced boundary model substantially improves cutoff prediction over the original formula, while CASS-v2 provides a strong non-LLM selfish-response baseline. The paper emphasizes that all data are synthetic and the resulting formula is a modeling scaffold, not a real-world guarantee.
 
 ## 1. 问题背景：从选课规则到网传公式
 
 许多投豆选课系统的规则可以概括为：
 
-1. 每个学生有固定预算 $B$，例如 `100` 豆。
-2. 每门课程有容量 $n$。
-3. 学生能看到当前有多少人想选这门课，记为 $m$。
+1. 每个学生有固定预算 `B`，例如 `100` 豆。
+2. 每门课程有容量 `n`。
+3. 学生能看到当前有多少人想选这门课，记为 `m`。
 4. 学生对若干课程提交投豆数。
 5. 课程按投豆排序录取，投出的豆子无论是否录取都会消耗。
 
@@ -71,8 +71,8 @@ $$
 
 为使问题可复现，本文采用以下假设：
 
-1. 学生总预算为 $B$，实验默认 $B=100$。
-2. 学生可观察课程容量 $n$、可见排队人数 $m$、课程学分、时间、类别和自身培养方案需求。
+1. 学生总预算为 `B`，实验默认 `B=100`。
+2. 学生可观察课程容量 `n`、可见排队人数 `m`、课程学分、时间、类别和自身培养方案需求。
 3. 学生不能观察其他学生真实投豆，也不能提前知道最终录取边界。
 4. 真实学生只有模糊偏好，不拥有精确效用表；实验中的效用指标仅用于策略比较。
 5. 合成市场保留现实结构，但不复刻任何真实教务系统。
@@ -115,11 +115,11 @@ $$
 
 网传公式有三个结构性问题：
 
-1. $m\le n$ 时 $\sqrt{m-n}$ 无实数意义。
-2. $m/n$ 较大时 $e^{m/n}$ 爆炸，可能建议一门课投入超过总预算。
+1. `m <= n` 时 `sqrt(m-n)` 无实数意义。
+2. `m/n` 较大时指数项爆炸，可能建议一门课投入超过总预算。
 3. 它缺少课程重要性、替代课、毕业压力、时间冲突和预算约束。
 
-因此，它不能作为个人最优投豆公式。两个学生面对同一门课，即使 $m,n$ 相同，只要一个人是必修、另一个人只是随便想上，最优投豆也应该不同。
+因此，它不能作为个人最优投豆公式。两个学生面对同一门课，即使 `m,n` 相同，只要一个人是必修、另一个人只是随便想上，最优投豆也应该不同。
 
 但它仍可能作为公共信号发挥作用：如果一部分学生知道公式，并相信公式附近是合理边界，他们会把投豆集中到公式附近。此时公式可能“看起来更准”，不是因为推导正确，而是因为它改变了群体行为。
 
@@ -153,7 +153,7 @@ $$
 
 `r` 表示拥挤比，`d` 表示超额人数。两者都重要：同样 `r=2`，容量 5 的课和容量 80 的课在市场中的边界压力并不完全一样；同样超额 10 人，小课和大课的拥挤程度也不同。
 
-使用 $\ln(1+d)$ 和 $\ln(1+r)$ 的原因是：竞争压力会随拥挤上升，但不应该像旧公式中的指数项那样爆炸。对数项表达的是“递增但边际放缓”的压力。
+使用 `ln(1+d)` 和 `ln(1+r)` 的原因是：竞争压力会随拥挤上升，但不应该像旧公式中的指数项那样爆炸。对数项表达的是“递增但边际放缓”的压力。
 
 ### 6.3 参数定义
 
@@ -173,9 +173,9 @@ $$
 
 ### 6.4 公式
 
-当 $m\le n$ 时，普通课先从 `1` 豆低价试探开始；重要课可以给小安全垫，但不机械套高竞争公式。
+当 `m <= n` 时，普通课先从 `1` 豆低价试探开始；重要课可以给小安全垫，但不机械套高竞争公式。
 
-当 $m>n$ 时：
+当 `m > n` 时：
 
 $$
 p_0=
@@ -234,23 +234,131 @@ CASS（Competition-Adaptive Selfish Selector）的目标是：在给定背景市
 
 它把学生端直觉形式化为四步：
 
-1. 看拥挤：用 $m/n$ 估计价格压力。
+1. 看拥挤：用 `m/n` 估计价格压力。
 2. 看价值：必修、核心、强偏好课程更值得追。
 3. 看替代：热门但可替代的课不硬碰。
 4. 做截断：不把预算 all-in 到一门课。
 
-早期 `cass_v1` 是硬分段。为避免拍脑袋参数，本文扩展为六个策略族，并做 one-at-a-time 敏感度分析：
+### 7.1 CASS-v1：硬分段策略到底怎么算
+
+`cass_v1` 是最早的可解释版本。它的好处是容易讲清楚，坏处是阈值看起来像人工拍脑袋。它分两件事做：先给课程排序，再给入选课程投豆。
+
+第一步是课程排序。对每门可选课，CASS-v1 计算一个选择分：
+
+```text
+选择分 =
+  课程偏好分
+  + 培养方案加成
+  + 低学分小加成
+  - 拥挤惩罚
+  + 已经选过的稳定性加成
+```
+
+其中培养方案加成体现“必修、强选、目标选修”的差异。必修课加成最高；强选课次之；普通可替代课最低。拥挤惩罚使用可见排队比 `m/n`：必修课的拥挤惩罚较弱，因为它更值得追；普通选修课的拥挤惩罚较强，因为它更应该找替代。
+
+第二步是课表可行性筛选。算法按选择分从高到低尝试加入课程，同时检查三类硬约束：同一课程代码不能重复、时间不能冲突、总学分不能超过上限。最多选择 `12` 门课。
+
+第三步是出价。第一时间点是信息盲区，CASS-v1 不知道真实拥挤，所以采用探测价：
+
+| 情况 | T1 出价 |
+| --- | ---: |
+| 必修课 | `5` 豆 |
+| 非必修课 | `1` 豆 |
+
+第二、第三时间点看到 `m/n` 后，CASS-v1 使用硬分段。下表里的“加价”会叠加到基础价上：必修课基础价为 `2`，非必修课基础价为 `1`。
+
+| 可见拥挤比 | 分层 | 加价规则 |
+| --- | --- | --- |
+| `m/n <= 0.3` | free | 加 `0` |
+| `0.3 < m/n <= 0.6` | light | 加 `1` |
+| `0.6 < m/n <= 1.0` | filling | 至少加 `2`，接近满员时更高 |
+| `1.0 < m/n <= 1.5` | crowded | 至少加 `5` |
+| `m/n > 1.5` | hot | 至少加 `8` |
+
+如果最后一个时间点仍是必修课，CASS-v1 再乘 `1.3` 做截止保护。所有课程还会受到单课上限约束：默认总预算为 `100` 时，单课最多约 `20` 豆。若总投豆超过预算，先压缩非必修课程；若 `cass_v1` 还有剩余预算，只给必修课或明显拥挤的高价值课补小安全垫，不会把豆子硬塞给低竞争课。
+
+这就是 CASS-v1 的完整含义：它不是简单“每门课按公式投”，而是先做可行课表组合，再按拥挤分层投豆。但它仍有两个缺陷。第一，`0.6`、`1.0`、`1.5` 这些边界是离散跳变，同一门课从 `m/n=1.49` 到 `1.51` 会突然变贵。第二，分段规则不能解释“为什么这个压力应该这么大”。因此后续版本必须引入连续压力曲线和敏感度分析。
+
+### 7.2 压力曲线：把拥挤从分段改成连续响应
+
+连续 CASS 使用一个从 `0` 到 `1` 的压力函数，把 `m/n` 映射成“这门课需要保护的程度”。默认曲线是：
+
+$$
+g(r)=\frac{r^2}{r^2+a}
+$$
+
+其中 `r` 是 `m/n`，`a` 是压力分母，默认 `1.2`。这条曲线有三个性质：
+
+1. `r=0` 时压力为 `0`，无竞争课自然只投最低价。
+2. `r` 接近 `1` 时压力明显上升，表示课程接近满员或已经满员。
+3. `r` 很大时压力接近 `1`，但不会无限爆炸。
+
+默认参数下的压力值如下：
+
+| `m/n` | 压力值 |
+| ---: | ---: |
+| `0.0` | `0.000` |
+| `0.5` | `0.172` |
+| `1.0` | `0.455` |
+| `1.5` | `0.652` |
+| `2.0` | `0.769` |
+| `3.0` | `0.882` |
+
+这比硬分段更适合建模：拥挤越强，出价越高；但边际增速会放缓，不会像网传公式中的指数项那样把一门课推到超过总预算。
+
+为了检验曲线形式是否决定结论，我们还测试了 S 型压力曲线。设：
+
+$$
+\sigma(x)=\frac{1}{1+e^{-x}}
+$$
+
+$$
+h(r)=\frac{\sigma(k(r-r_0))-\sigma(-kr_0)}{1-\sigma(-kr_0)}
+$$
+
+其中 `r0=1.0`，`k=3.0`。这条曲线在 `m/n` 接近 `1` 时上升更陡。实验中 `cass_logit` 没有打败 `cass_v2`，说明结论不是依赖某一条特殊曲线；真正关键的是“连续压力 + 价值成本权衡”。
+
+### 7.3 连续 CASS 的投豆公式
+
+连续 CASS 的出价由四个量相乘：
+
+```text
+出价 =
+  最低价
+  + 单课上限
+    * 拥挤压力
+    * 价值缩放
+    * 要求缩放
+    * 截止 urgency
+```
+
+具体解释：
+
+| 组件 | 作用 |
+| --- | --- |
+| 最低价 | 必修课最低 `2`，非必修课最低 `1` |
+| 单课上限 | 默认总预算的 `20%`，预算 `100` 时约 `20` 豆 |
+| 拥挤压力 | 由 `m/n` 的压力曲线给出 |
+| 价值缩放 | 课程偏好越高，越值得为压力加价；低价值课被压低 |
+| 要求缩放 | 必修课最高，强选课次之，普通目标课最低 |
+| 截止 urgency | 越接近最后时间点，必修课保护略增强 |
+
+所有结果再经过整数化、单课上限和总预算压缩。这样做的数学含义是：投豆不是“喜欢程度”的直接表达，而是“价格压力 × 课程价值 × 要求压力”的有界响应。
+
+### 7.4 六个策略族：每个版本在检验什么
+
+为避免把 `cass_v2` 写成唯一拍脑袋答案，本文比较了六个策略族：
 
 | 策略 | 机制 |
 | --- | --- |
-| `cass_v1` | 原始 `m/n` 分段 |
-| `cass_smooth` | 连续压力曲线 |
-| `cass_value` | 强 price penalty + optional hot penalty |
-| `cass_v2` | balanced value-cost 选择 + 连续压力响应 |
-| `cass_frontier` | value/bean frontier |
-| `cass_logit` | S 型拥挤压力曲线 |
+| `cass_v1` | 硬分段选课和硬分段出价，作为历史基线 |
+| `cass_smooth` | 保留 v1 的选课排序，但把出价换成连续压力曲线 |
+| `cass_value` | 强化价格惩罚和热门可替代课惩罚，检验“极度反浪费”是否足够 |
+| `cass_v2` | 平衡版价值-成本选择，是当前默认策略 |
+| `cass_frontier` | 按价值除以价格压力排序，检验“单位豆收益最大化”的边界 |
+| `cass_logit` | 把默认压力曲线替换成 S 型曲线，检验曲线形式敏感性 |
 
-`cass_v2` 的核心形式：
+`cass_v2` 的选择分是：
 
 $$
 pressure=\frac{r^2}{r^2+1.2}
@@ -261,6 +369,19 @@ expected_bid = floor + max_single_bid * pressure * utility_scale * requirement_s
 selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 ```
 
+这条式子里，`course_value` 包含课程偏好、培养方案加成、低学分小加成和已选稳定性加成；`expected_bid` 是这门课预计需要付出的竞争成本；`optional_hot_penalty` 只对非必修热门课生效，用来鼓励寻找替代。系数 `1.8` 不是福利函数，而是策略参数：它表示“为了更高课程价值，算法愿意付出多少竞争成本”。后面的敏感度分析专门检查这个参数附近是否稳健。
+
+### 7.5 敏感度分析：哪些参数真的重要
+
+本文对 `cass_v2` 做 one-at-a-time 扰动，核心参数包括压力分母、价格惩罚、热门可替代课惩罚、单课上限和必修基础加成。这个设计的目的不是把参数调到最好看，而是检查结论是否依赖某一个手调常数。
+
+结果显示：
+
+1. `price_penalty` 过低会显著变差。说明只看课程价值、不看竞争成本，会退回“喜欢就猛投”的坏策略。
+2. `max_single_bid_share` 过低会显著变差。说明“不 all-in”不等于“所有课都压得很低”；必修和核心课仍需要足够火力。
+3. 略提高单课上限或提高价格惩罚不会推翻默认策略。说明 `cass_v2` 不是靠单一参数偶然获胜。
+4. 必修基础加成扰动影响较小。说明结果不只是“强行把 required 排最前”，而是价值、拥挤和课表可行性共同作用。
+
 结果：
 
 | 策略 | 平均效用 | 相对 BA 平均提升 | 花豆 | 拒录浪费 | 稳健分 |
@@ -270,13 +391,13 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 | `cass_value` | `2217.63` | `766.51` | `37.81` | `0.00` | `697.85` |
 | `cass_v1` | `2182.95` | `731.83` | `61.50` | `8.31` | `633.68` |
 
-结论是：`cass_v2` 是当前最强规则基准策略；单纯省豆不是最优目标，真正目标是先保结果，再减少无效多投。
+结论是：`cass_v2` 是当前最强规则基准策略。它不是靠多花豆赢：相比 `cass_v1`，它平均效用更高、花豆更少、拒录浪费更低。`cass_value` 证明“极度反浪费”可以把失败豆子压到 `0`，但会牺牲一部分高价值机会；`cass_frontier` 则证明“只追求单位豆收益”会过度保守。整体结论是：先保结果，再减少无效多投，才是本问题里更合理的单智能体目标。
 
 ## 8. 模型四：LLM 与公式 scaffold
 
 LLM + formula 的实验说明，公式对大模型的作用不是让它机械套公式，而是提供一个 decision scaffold：
 
-- 用 $m/n$ 识别拥挤。
+- 用 `m/n` 识别拥挤。
 - 对高竞争可替代课更愿意放弃。
 - 对低竞争课更克制。
 - 对必修/核心课保留安全垫。
@@ -318,9 +439,9 @@ LLM + formula 的实验说明，公式对大模型的作用不是让它机械套
 
 现实学生不需要计算实验里的效用指标。可执行策略是：
 
-1. **看拥挤比**：$r=m/n$。
-   - $r\le1$：普通课低价试探。
-   - $r>1$：进入边界估计。
+1. **看拥挤比**：`r=m/n`。
+   - `r <= 1`：普通课低价试探。
+   - `r > 1`：进入边界估计。
 2. **算基础边界**：用 `p` 公式估计预算占比。
 3. **乘重要性系数**：
    - 可替代课 `0.85`
@@ -360,7 +481,7 @@ LLM + formula 的实验说明，公式对大模型的作用不是让它机械套
 主要结论：
 
 1. 网传公式不是完全无用，但它作为最终投豆答案是危险的；它更适合作为拥挤信号。
-2. $m/n$ 是学生最容易观察、也最有解释力的公开竞争信号。
+2. `m/n` 是学生最容易观察、也最有解释力的公开竞争信号。
 3. 进阶边界公式应输出预算占比，并通过课程重要性和单课 cap 转化为投豆建议。
 4. CASS-v2 说明连续压力响应和 value-cost 选择优于硬分段。
 5. LLM + formula 的优势来自 scaffold：学会克制、分散、替代，而不是机械套公式。

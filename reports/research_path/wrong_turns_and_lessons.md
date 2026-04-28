@@ -33,17 +33,14 @@
 也就是现在的 `advanced_boundary_v1`：
 
 $$
-r=\frac{m}{n},\qquad d=\max(0,m-n)
+r=\frac{m}{n}
 $$
 
 $$
-s_0=
-\left[
-\beta_0+\beta_d\ln(1+d)+\beta_r\ln(1+r)+\tau
-\right]_0^c
+d=\max(0,m-n)
 $$
 
-再用预算、重要性系数和单课 cap 转成最终投豆。
+再用对数公式估预算占比，用预算、重要性系数和单课 cap 转成最终投豆。路线图里不再保留旧的截断记号，是为了避免读者把数学符号误读成现实中的绝对边界表。
 
 ## 3. 弯路：把低 rejected waste 误读成更聪明
 

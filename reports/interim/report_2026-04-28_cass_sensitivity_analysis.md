@@ -59,18 +59,134 @@ robust_score
 
 这个分数刻意把 utility 放在第一位，同时惩罚波动、拒录浪费和事后非边际豆子。
 
-## 3. 六个策略族
+## 3. CASS-v1：原始硬分段策略
+
+`cass_v1` 是本项目最早的 CASS 版本。它的意义不是最终答案，而是把一句直觉写成可运行算法：
+
+```text
+先判断课程值不值得选；
+再看这门课有没有竞争；
+没竞争就少投，有竞争才保护；
+超过预算时先压缩非必修课。
+```
+
+### 3.1 课程选择
+
+CASS-v1 对每门可选课程计算选择分：
+
+```text
+选择分 =
+  课程偏好分
+  + 培养方案加成
+  + 低学分小加成
+  - 拥挤惩罚
+  + 已选稳定性加成
+```
+
+培养方案加成把 required、strong elective、optional target 分开。必修课加成最高，因为错过会带来毕业或培养方案风险；强选课次之；普通可替代课最低。拥挤惩罚使用 `m/n`，并且普通选修课的拥挤惩罚更强，因为它更应该找替代。
+
+排序后，算法依次加入课程，并检查：
+
+- 同一课程代码只选一个 section。
+- 上课时间不能冲突。
+- 总学分不能超过学生 credit cap。
+- 最多选择 `12` 门课。
+
+### 3.2 硬分段出价
+
+T1 没有真实排队信息时，CASS-v1 采用探测价：
+
+| 情况 | T1 出价 |
+| --- | ---: |
+| required | `5` |
+| non-required | `1` |
+
+T2/T3 看到 `m/n` 后，CASS-v1 使用分层加价。必修课基础价为 `2`，非必修课基础价为 `1`。
+
+| `m/n` 区间 | 分层 | 加价规则 |
+| --- | --- | --- |
+| `<= 0.3` | free | 加 `0` |
+| `0.3-0.6` | light | 加 `1` |
+| `0.6-1.0` | filling | 至少加 `2`，接近满员时更高 |
+| `1.0-1.5` | crowded | 至少加 `5` |
+| `> 1.5` | hot | 至少加 `8` |
+
+若最后时间点仍是 required，出价再乘 `1.3` 做截止保护。低价值 hot 选修课会被压低，避免为可替代课支付过高价格。所有 bid 还会受到单课上限约束，默认总预算 `100` 时单课约 `20` 豆。
+
+如果总投豆超过预算，压缩顺序是：先砍非 required，再砍其他课程，但保留最低价。若还有剩余预算，v1 只给 required 或拥挤的高价值课补最多 `3` 豆安全垫，不会强行把预算花满。
+
+### 3.3 为什么 v1 不够
+
+v1 的解释性强，但建模上有三个问题：
+
+1. 阈值跳变：`m/n=1.49` 和 `m/n=1.51` 会进入不同区间。
+2. 参数缺少曲线解释：很难说明为什么 crowded 至少加 `5`，hot 至少加 `8`。
+3. 选课和出价耦合不够：高拥挤可替代课应该在选课阶段就被扣分，而不是选上后再被动省豆。
+
+因此后续策略族的目标不是把 v1 继续调参，而是把“拥挤压力”改成连续函数，并把预计投豆成本纳入课程选择。
+
+## 4. 压力曲线与连续出价
+
+连续 CASS 使用压力函数把 `m/n` 转成 `0` 到 `1` 之间的竞争压力。默认曲线是：
+
+```text
+pressure = ratio^2 / (ratio^2 + pressure_denominator)
+```
+
+默认 `pressure_denominator = 1.2`。它表达三个判断：
+
+- 无竞争时 pressure 接近 `0`，只需要最低价。
+- 接近满员时 pressure 快速上升，需要开始保护。
+- 极端拥挤时 pressure 接近 `1`，但不会像指数公式那样爆炸。
+
+默认压力值：
+
+| `m/n` | pressure |
+| ---: | ---: |
+| `0.0` | `0.000` |
+| `0.5` | `0.172` |
+| `1.0` | `0.455` |
+| `1.5` | `0.652` |
+| `2.0` | `0.769` |
+| `3.0` | `0.882` |
+
+连续出价公式写成代码更清楚：
+
+```text
+expected_bid =
+  floor
+  + max_single_bid
+    * pressure
+    * utility_scale
+    * (1 + requirement_scale)
+    * urgency
+```
+
+解释：
+
+| 组件 | 含义 |
+| --- | --- |
+| `floor` | required 最低 `2`，非 required 最低 `1` |
+| `max_single_bid` | 默认总预算的 `20%` |
+| `pressure` | 由 `m/n` 得到的拥挤压力 |
+| `utility_scale` | 课程偏好越高，越值得加价 |
+| `requirement_scale` | required、strong elective、optional target 的要求强度 |
+| `urgency` | 越接近截止，required 保护略增强 |
+
+`cass_logit` 用 S 型曲线替代默认 rational curve，用来检查曲线形式敏感性。结果显示 logit 版本没有打败 `cass_v2`，说明本轮结论不依赖某一条特殊曲线。
+
+## 5. 六个策略族
 
 | Policy | 机制 | 作用 |
 | --- | --- | --- |
-| `cass_v1` | 原始 m/n 分段出价 | 历史基线，检验分段策略是否足够 |
-| `cass_smooth` | 连续压力曲线出价，保留旧选课逻辑 | 检验“只平滑出价”是否有效 |
+| `cass_v1` | 原始硬分段选课与出价 | 历史基线，检验分段策略是否足够 |
+| `cass_smooth` | v1 选课 + 连续压力出价 | 检验“只平滑出价”是否有效 |
 | `cass_value` | 强 price penalty + optional hot penalty | 极端减少无效投豆 |
 | `cass_v2` | balanced value-cost 选择 + 连续压力响应 | 默认主策略 |
 | `cass_frontier` | value/bean frontier 排序 | 检验“省豆优先”的边界 |
 | `cass_logit` | S 型拥挤压力曲线 | 检验响应函数形式敏感性 |
 
-`cass_v2` 的核心不再是硬分段，而是连续压力响应：
+`cass_v2` 的核心不再是硬分段，而是把预计投豆成本放回选课排序：
 
 ```text
 pressure = ratio^2 / (ratio^2 + 1.2)
@@ -78,9 +194,9 @@ expected_bid = floor + max_single_bid * pressure * utility_scale * requirement_s
 selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 ```
 
-含义很直接：没竞争时 pressure 接近 0，只投最低价；竞争变强时出价连续上升；但如果课程价值不够，就把它从候选组合里挤出去。
+`course_value` 包含课程偏好、培养方案加成、低学分小加成和已选稳定性加成。`expected_bid` 是预计竞争成本。`optional_hot_penalty` 只惩罚非 required 热门课，鼓励寻找替代。系数 `1.8` 是 balanced 版本的价格惩罚强度：它让算法在“课很值”和“太贵”之间做权衡。
 
-## 4. 策略族结果
+## 6. 策略族结果
 
 | Policy | Avg utility | Std utility | Avg delta vs BA | Beans | Rejected waste | Non-marginal | HHI | Robust score |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -98,7 +214,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 - `cass_frontier` 证明了节省豆子的边界：它能把平均花豆压到 `30.94`，但 utility 损失太大，不能作为主策略。
 - `cass_logit` 没有击败 `cass_v2`，说明当前结论不是依赖某一个特殊的 S 型函数。
 
-## 5. 分市场观察
+## 7. 分市场观察
 
 | Background | Best utility policy | Best anti-waste policy | 说明 |
 | --- | --- | --- | --- |
@@ -109,7 +225,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 
 这个结果和前面的机制判断一致：低竞争或稀疏热点市场并不是“没有算法价值”。恰恰相反，笨策略会在大量 free/light 课程上浪费豆子，CASS 可以把预算留给少数真正有竞争、有价值的课程。
 
-## 6. OAT 敏感度分析
+## 8. OAT 敏感度分析
 
 围绕 `cass_v2` 做 10 个 one-at-a-time 扰动。核心结果如下：
 
@@ -132,7 +248,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 - `price_penalty_low` 明显变差，说明 value-cost tradeoff 是核心，不应退回“看上就投”的行为。
 - `max_single_low` 损害最大，说明“不要 all-in”不等于“单课永远压得很低”。在高价值 required/core 课程上，过低上限会让算法失去抢课能力。
 
-## 7. 对公式的定位
+## 9. 对公式的定位
 
 本项目现在不把“投豆公式”当答案，但也不否定它的价值。它有用的地方是把拥挤程度变成信号；它不足的地方是：
 
@@ -155,7 +271,7 @@ CASS-v2 的改进是把公式信号放回一个更完整的问题里：先判断
 
 这也是为什么本报告里的“utility 更高”不能被误读为“学生应该精确计算 utility”。研究结论的可迁移部分是定性的：先看拥挤，再看价值；没竞争时别当怨种，有竞争时也只为真正重要的课加码。
 
-## 8. 复现方式
+## 10. 复现方式
 
 完整敏感度实验：
 
@@ -181,7 +297,7 @@ python -m src.analysis.cass_policy_sensitivity
 - `outputs/tables/cass_sensitivity_policy_summary.csv`
 - `outputs/tables/cass_sensitivity_oat_summary.csv`
 
-## 9. 当前边界
+## 11. 当前边界
 
 - 本轮是 fixed-background replay，不等价于所有策略的 full online head-to-head。S048 online 已验证 CASS 系列强于 LLM+formula，但多 focal online 仍需补跑。
 - `robust_score` 是排序辅助，不是福利函数。主结论仍看 `course_outcome_utility`。

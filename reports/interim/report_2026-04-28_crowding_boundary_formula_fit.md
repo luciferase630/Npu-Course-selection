@@ -1,11 +1,11 @@
-# 拥挤比边界公式拟合报告
+# 拥挤比录取边界公式拟合报告
 
 ## 核心结论
 
 - 本轮使用 `87` 个 run，聚合 `10469` 条 `run × course section` 观测。
-- 最优综合模型是 `logistic_saturation`：test MAE `0.939597`，coverage `0.884228`，平均 overpay `0.384787`。
-- 公开公式版本是 `advanced_boundary_v1_aggressive_safe`：test MAE `1.213647`，coverage `0.942953`，目标是 90%-95% 的“激进稳拿”。
-- 原始流传公式即使经过最优缩放，test MAE 仍为 `4.580537`，coverage `0.724273`，明显弱于拥挤比分箱和 log 饱和模型。
+- 最优综合模型是 `logistic_saturation`：测试平均绝对误差 `0.939597`，覆盖率 `0.884228`，平均多投 `0.384787`。
+- 公开公式版本是 `advanced_boundary_v1_aggressive_safe`：测试平均绝对误差 `1.213647`，覆盖率 `0.942953`，目标是 90%-95% 的“激进稳拿”。
+- 原始流传公式即使经过最优缩放，测试平均绝对误差仍为 `4.580537`，覆盖率 `0.724273`，明显弱于拥挤比分箱和 log 饱和模型。
 - 流传公式只看 `m,n`，方向上能表达拥挤，但缺少课程重要性、替代品、毕业压力和预算约束，不能直接当最终投豆答案。
 - 学生可执行策略应是：先用拥挤比预测边界，再按课程重要性加安全垫。
 
@@ -20,9 +20,9 @@ n = 教学班容量
 target = cutoff_bid
 ```
 
-目标是拟合 `cutoff_bid / budget` 这种预算占比参量，不是把模拟数据中的绝对 cutoff 当成真实世界边界。学生没有精确 utility 表，因此最终建议只使用拥挤比、课程重要性和替代品判断。
+这里的 `cutoff_bid` 是实验回测里观察到的录取边界豆数。目标是拟合 `cutoff_bid / budget` 这种预算占比参量，不是把模拟数据中的绝对录取边界当成真实世界边界。学生没有精确效用表，因此最终建议只使用拥挤比、课程重要性和替代品判断。
 
-训练/测试按 run_id 哈希切分，避免同一 run 的教学班同时出现在训练和测试里。`coverage` 表示预测边界不低于真实 cutoff 的比例；`mean overpay` 表示预测边界高于 cutoff 的平均豆数，衡量“边界估高导致多投”的风险。
+训练/测试按 run_id 哈希切分，避免同一 run 的教学班同时出现在训练和测试里。`coverage` 表示预测边界不低于真实录取边界的比例；`mean overpay` 表示预测边界高于真实边界的平均豆数，衡量“边界估高导致多投”的风险。
 
 ## 候选公式
 
@@ -31,7 +31,7 @@ target = cutoff_bid
 - `ratio_power`：使用 `max(0,r-1)^p`，扫描多个幂次。
 - `excess_capacity`：同时使用拥挤比、超额人数 `m-n` 和容量尺度。
 - `log_saturation`：使用 `log(1+max(0,m-n))` 与 `log(1+r)`，允许高拥挤区域逐渐饱和。
-- `bin_quantile`：按拥挤比分箱，取训练集中 cutoff 的 p50/p75/p90，仅作为 sanity check，不作为 README 的最终公式。
+- `bin_quantile`：按拥挤比分箱，取训练集中录取边界的 p50/p75/p90，仅作为 sanity check，不作为 README 的最终公式。
 - `advanced_boundary_v1_aggressive_safe`：把 log 饱和模型换算为预算占比，在 `m/n > 1` 的课程上校准安全项，再做单课 cap 截断。
 
 ## 推荐公式
@@ -54,7 +54,7 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 
 ## 模型比较
 
-| Model | Test MAE | Coverage | Mean overpay | High-r MAE | Low-r MAE |
+| 模型 | 测试平均绝对误差 | 覆盖率 | 平均多投 | 高拥挤误差 | 低拥挤误差 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `logistic_saturation` | 0.939597 | 0.884228 | 0.384787 | 3.346614 | 0.0 |
 | `log_saturation` | 0.944072 | 0.884228 | 0.388702 | 3.36255 | 0.0 |
@@ -71,7 +71,7 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 
 这里单独看 `r > 1` 的高拥挤课程，区分整体高竞争市场和 sparse-hotspots 这种“多数课不挤、少数课很热”的市场。优先使用测试集；若某个市场在按 run 切分后的测试集中没有样本，则用全量观测做描述性 sanity check。
 
-| Stratum | Sample | Model | n | MAE | Coverage | Mean overpay |
+| 分层 | 样本 | 模型 | 观测数 | 平均绝对误差 | 覆盖率 | 平均多投 |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
 | high-market hot courses | test | `log_saturation` | 467 | 3.256959 | 0.595289 | 1.417559 |
 | high-market hot courses | test | `advanced_boundary_v1_aggressive_safe` | 467 | 4.278373 | 0.809422 | 3.428266 |
@@ -86,11 +86,11 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 | all low-r courses | test | `advanced_boundary_v1_aggressive_safe` | 1286 | 0.0 | 1.0 | 0.0 |
 | all low-r courses | test | `original_formula_scaled` | 1286 | 3.0 | 1.0 | 3.0 |
 
-分层 caveat：`advanced_boundary_v1` 的整体 coverage 达到目标区间，但在若干 `r > 1` 的热门课分层里还没有达到 90%-95%。这说明单靠 `m/n` 和 `m-n` 不能保证每一门热门课都稳录；课程重要性、替代品和单课 cap 仍然必须参与最终决策。它在这些分层中仍明显强于旧公式，但不能宣传为所有热门课无条件最优。
+分层提醒：`advanced_boundary_v1` 的整体覆盖率达到目标区间，但在若干 `r > 1` 的热门课分层里还没有达到 90%-95%。这说明单靠 `m/n` 和 `m-n` 不能保证每一门热门课都稳录；课程重要性、替代品和单课 cap 仍然必须参与最终决策。它在这些分层中仍明显强于旧公式，但不能宣传为所有热门课无条件最优。
 
 ## 拥挤比分箱表
 
-| r bin | n | cutoff p50 | cutoff p75 | cutoff p90 |
+| 拥挤比区间 | 观测数 | 录取边界 p50 | 录取边界 p75 | 录取边界 p90 |
 | --- | ---: | ---: | ---: | ---: |
 | `[0,0.5)` | 4583 | 0.0 | 0.0 | 0.0 |
 | `[0.5,0.8)` | 1487 | 0.0 | 0.0 | 0.0 |
