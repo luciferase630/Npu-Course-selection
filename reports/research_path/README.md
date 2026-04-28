@@ -13,6 +13,7 @@
 
 ## 推荐阅读顺序
 
+0. [论文式总稿](../final/paper_2026-04-28_course_bidding_math_model.md)：按数学建模论文结构完整说明问题、假设、模型、算法、实验和结论。
 1. [研究路线图](research_journey.md)  
    从流传公式开始，解释为什么要做合成市场、BA、LLM、CASS、进阶公式和策略扩散实验。
 2. [建模报告入口](modeling_report_index.md)  
