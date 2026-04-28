@@ -655,6 +655,14 @@ python -m pip install -e .
 python -m bidflow --help
 ```
 
+Launch the local GUI:
+
+```powershell
+python -m bidflow gui
+```
+
+The GUI opens a local browser page and covers the same main workflow as the CLI: market creation, validation, session runs, replay runs, analysis, agent management, and file previews.
+
 Generate a synthetic market:
 
 ```powershell

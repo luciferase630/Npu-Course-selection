@@ -19,3 +19,6 @@ bidflow = "bidflow.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["bidflow*", "src*"]
+
+[tool.setuptools.package-data]
+"bidflow.gui" = ["static/*"]

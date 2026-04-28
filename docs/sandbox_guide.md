@@ -46,6 +46,14 @@ bidflow --help
 
 如果 `bidflow` 命令不可用，但 `python -m bidflow --help` 可用，通常是当前 shell 没刷新 Python scripts 路径。先用 `python -m bidflow ...` 即可。
 
+启动本地 GUI：
+
+```powershell
+python -m bidflow gui
+```
+
+GUI 默认只绑定 `127.0.0.1`，会在浏览器里打开 BidFlow 工作台。它覆盖 CLI 的主要流程：生成 market、validate/info、跑 session、跑 replay、做 analyze、查看 agent 和预览输出文件。后续章节中的命令行参数，在 GUI 里基本都有对应表单字段。
+
 建议每次大改后跑：
 
 ```powershell

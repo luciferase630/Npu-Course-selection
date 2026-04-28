@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from bidflow.cli import agent, analyze, market, replay, session
+from bidflow.cli import agent, analyze, gui, market, replay, session
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -14,6 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     session.add_parser(subparsers)
     replay.add_parser(subparsers)
     analyze.add_parser(subparsers)
+    gui.add_parser(subparsers)
     return parser
 
 
@@ -33,5 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         return replay.run(args)
     if args.command == "analyze":
         return analyze.run(args)
+    if args.command == "gui":
+        return gui.run(args)
     parser.error(f"unknown command '{args.command}'")
     return 2

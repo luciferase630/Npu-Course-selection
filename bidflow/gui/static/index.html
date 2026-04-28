@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BidFlow GUI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>BidFlow 沙盒</h1>
+        <p id="health">正在连接本地服务...</p>
+      </div>
+      <button id="refreshJobs" type="button">刷新任务</button>
+    </header>
+
+    <nav class="tabs" aria-label="BidFlow GUI sections">
+      <button class="tab active" data-tab="home" type="button">总览</button>
+      <button class="tab" data-tab="market" type="button">Market</button>
+      <button class="tab" data-tab="session" type="button">Session</button>
+      <button class="tab" data-tab="replay" type="button">Replay</button>
+      <button class="tab" data-tab="analysis" type="button">Analysis</button>
+      <button class="tab" data-tab="agents" type="button">Agents</button>
+      <button class="tab" data-tab="files" type="button">Files</button>
+    </nav>
+
+    <main>
+      <section id="home" class="panel active">
+        <div class="grid two">
+          <section class="surface">
+            <h2>最近任务</h2>
+            <div id="jobs" class="job-list"></div>
+          </section>
+          <section class="surface">
+            <h2>输出</h2>
+            <pre id="output" class="output"></pre>
+          </section>
+        </div>
+      </section>
+
+      <section id="market" class="panel">
+        <div class="grid two">
+          <form class="surface api-form" data-endpoint="/api/markets/create" data-job="true">
+            <h2>简单生成</h2>
+            <label>名称 <input name="name" value="my_market" /></label>
+            <label>输出目录 <input name="output" value="data/synthetic/my_market" /></label>
+            <label>规模预设
+              <select name="size">
+                <option value="small">small</option>
+                <option value="tiny">tiny</option>
+                <option value="medium">medium</option>
+                <option value="large">large</option>
+              </select>
+            </label>
+            <label>学生数 <input name="students" type="number" value="200" /></label>
+            <label>教学班数 <input name="classes" type="number" value="120" /></label>
+            <label>培养方案数 <input name="majors" type="number" placeholder="自动推导" /></label>
+            <label>课程代码数 <input name="codes" type="number" placeholder="自动推导" /></label>
+            <label>竞争强度
+              <select name="competition_profile">
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="sparse_hotspots">sparse_hotspots</option>
+              </select>
+            </label>
+            <label>随机种子 <input name="seed" type="number" value="20260428" /></label>
+            <label class="check"><input name="dry_run" type="checkbox" /> dry-run</label>
+            <label class="check"><input name="audit" type="checkbox" /> audit</label>
+            <button type="submit">生成沙盒</button>
+          </form>
+
+          <form class="surface api-form" data-endpoint="/api/markets/generate" data-job="true">
+            <h2>研究场景</h2>
+            <label>Scenario
+              <select id="scenarioSelect" name="scenario">
+                <option value="medium">medium</option>
+              </select>
+            </label>
+            <label>输出目录 <input name="output" value="data/synthetic/my_medium" /></label>
+            <label>随机种子 <input name="seed" type="number" /></label>
+            <label>学生数覆盖 <input name="n_students" type="number" /></label>
+            <label>教学班覆盖 <input name="n_course_sections" type="number" /></label>
+            <label>培养方案覆盖 <input name="n_profiles" type="number" /></label>
+            <label>课程代码覆盖 <input name="n_course_codes" type="number" /></label>
+            <label>竞争强度覆盖
+              <select name="competition_profile">
+                <option value=""></option>
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="sparse_hotspots">sparse_hotspots</option>
+              </select>
+            </label>
+            <button type="submit">按场景生成</button>
+          </form>
+        </div>
+
+        <div class="grid three">
+          <form class="surface api-form" data-endpoint="/api/markets/validate">
+            <h2>Validate</h2>
+            <label>Market 路径 <input name="market" value="data/synthetic/my_market" /></label>
+            <button type="submit">验证</button>
+          </form>
+          <form class="surface api-form" data-endpoint="/api/markets/info">
+            <h2>Info</h2>
+            <label>Market 路径 <input name="market" value="data/synthetic/my_market" /></label>
+            <button type="submit">摘要</button>
+          </form>
+          <form class="surface api-form" data-endpoint="/api/markets/course">
+            <h2>Course</h2>
+            <label>Market 路径 <input name="market" value="data/synthetic/my_market" /></label>
+            <label>Course ID <input name="course_id" placeholder="C0001-001" /></label>
+            <button type="submit">课程详情</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="session" class="panel">
+        <form class="surface api-form wide" data-endpoint="/api/sessions/run" data-job="true">
+          <h2>Session Run</h2>
+          <label>Market <input name="market" value="data/synthetic/my_market" /></label>
+          <label>Population <input name="population" value="background=behavioral" /></label>
+          <label>Population file <input name="population_file" /></label>
+          <label>Output <input name="output" value="outputs/runs/my_market_behavioral" /></label>
+          <label>Run ID <input name="run_id" value="my_market_behavioral" /></label>
+          <label>Time points <input name="time_points" type="number" value="3" /></label>
+          <label>Seed <input name="seed" type="number" /></label>
+          <label>Config <input name="config" value="configs/simple_model.yaml" /></label>
+          <label>Experiment config <input name="experiment_config" /></label>
+          <label>Experiment group <input name="experiment_group" value="E0_llm_natural_baseline" /></label>
+          <label>Interaction mode <input name="interaction_mode" value="tool_based" /></label>
+          <label>Background formula share <input name="background_formula_share" type="number" step="0.01" value="0" /></label>
+          <label>CASS policy
+            <select name="cass_policy">
+              <option value="cass_v2">cass_v2</option>
+              <option value="cass_v1">cass_v1</option>
+              <option value="cass_smooth">cass_smooth</option>
+              <option value="cass_value">cass_value</option>
+              <option value="cass_balanced">cass_balanced</option>
+              <option value="cass_frontier">cass_frontier</option>
+              <option value="cass_logit">cass_logit</option>
+            </select>
+          </label>
+          <label class="check"><input name="formula_prompt" type="checkbox" /> formula prompt</label>
+          <button type="submit">运行 Session</button>
+        </form>
+      </section>
+
+      <section id="replay" class="panel">
+        <form class="surface api-form wide" data-endpoint="/api/replays/run" data-job="true">
+          <h2>Replay Run</h2>
+          <label>Baseline <input name="baseline" value="outputs/runs/my_market_behavioral" /></label>
+          <label>Focal student <input name="focal" value="S001" /></label>
+          <label>Agent
+            <select name="agent">
+              <option value="cass">cass</option>
+              <option value="formula">formula</option>
+              <option value="llm">llm</option>
+            </select>
+          </label>
+          <label>Agents 批量 <input name="agents" placeholder="cass,formula" /></label>
+          <label>Output <input name="output" value="outputs/runs/my_market_s001_cass_replay" /></label>
+          <label>Data dir <input name="data_dir" value="data/synthetic/my_market" /></label>
+          <label>Config <input name="config" value="configs/simple_model.yaml" /></label>
+          <label>Formula policy
+            <select name="formula_policy">
+              <option value="legacy_formula_v1">legacy_formula_v1</option>
+              <option value="advanced_boundary_v1">advanced_boundary_v1</option>
+              <option value="advanced_boundary_tail_v1">advanced_boundary_tail_v1</option>
+              <option value="bid_allocation_v1">bid_allocation_v1</option>
+            </select>
+          </label>
+          <label>Formula prompt policy
+            <select name="formula_prompt_policy">
+              <option value="legacy_formula_v1">legacy_formula_v1</option>
+              <option value="advanced_boundary_v1">advanced_boundary_v1</option>
+              <option value="advanced_boundary_tail_v1">advanced_boundary_tail_v1</option>
+              <option value="bid_allocation_v1">bid_allocation_v1</option>
+            </select>
+          </label>
+          <label>CASS policy
+            <select name="policy">
+              <option value="cass_v2">cass_v2</option>
+              <option value="cass_v1">cass_v1</option>
+              <option value="cass_smooth">cass_smooth</option>
+              <option value="cass_value">cass_value</option>
+              <option value="cass_balanced">cass_balanced</option>
+              <option value="cass_frontier">cass_frontier</option>
+              <option value="cass_logit">cass_logit</option>
+            </select>
+          </label>
+          <label>Params <textarea name="params" placeholder="key=value，每行一个"></textarea></label>
+          <label class="check"><input name="formula_prompt" type="checkbox" /> formula prompt</label>
+          <button type="submit">运行 Replay</button>
+        </form>
+      </section>
+
+      <section id="analysis" class="panel">
+        <div class="grid two">
+          <form class="surface api-form" data-endpoint="/api/analysis/summary">
+            <h2>Summary</h2>
+            <label>Runs <textarea name="runs" placeholder="outputs/runs/a&#10;outputs/runs/b"></textarea></label>
+            <button type="submit">汇总</button>
+          </form>
+          <form class="surface api-form" data-endpoint="/api/analysis/beans">
+            <h2>Beans</h2>
+            <label>Runs <textarea name="runs" placeholder="outputs/runs/a&#10;outputs/runs/b"></textarea></label>
+            <button type="submit">豆子诊断</button>
+          </form>
+          <form class="surface api-form" data-endpoint="/api/analysis/focal">
+            <h2>Focal</h2>
+            <label>Run <input name="run" value="outputs/runs/my_market_behavioral" /></label>
+            <label>Student ID <input name="student_id" value="S001" /></label>
+            <button type="submit">查看学生</button>
+          </form>
+          <form class="surface api-form" data-endpoint="/api/analysis/cass-sensitivity" data-job="true">
+            <h2>CASS Sensitivity</h2>
+            <label>Output dir <input name="output_dir" value="outputs/runs/cass_sensitivity" /></label>
+            <label>Detail table <input name="detail_table" value="outputs/tables/cass_sensitivity_detail.csv" /></label>
+            <label>Policy summary <input name="policy_summary_table" value="outputs/tables/cass_sensitivity_policy_summary.csv" /></label>
+            <label>OAT summary <input name="oat_summary_table" value="outputs/tables/cass_sensitivity_oat_summary.csv" /></label>
+            <label>Config <input name="config" value="configs/simple_model.yaml" /></label>
+            <label class="check"><input name="quick" type="checkbox" checked /> quick</label>
+            <button type="submit">运行敏感度</button>
+          </form>
+          <form class="surface api-form wide" data-endpoint="/api/analysis/crowding-boundary" data-job="true">
+            <h2>Crowding Boundary</h2>
+            <label>Run roots <textarea name="run_root" placeholder="outputs/runs"></textarea></label>
+            <label>Detail table <input name="detail_table" /></label>
+            <label>Summary table <input name="summary_table" /></label>
+            <label>Bin table <input name="bin_table" /></label>
+            <label>Report <input name="report" /></label>
+            <label>Formula config <input name="formula_config" /></label>
+            <label class="check"><input name="quick" type="checkbox" checked /> quick</label>
+            <label class="check"><input name="no_sibling" type="checkbox" /> no sibling</label>
+            <button type="submit">拟合边界公式</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="agents" class="panel">
+        <div class="grid two">
+          <section class="surface">
+            <h2>Agent 列表</h2>
+            <button id="loadAgents" type="button">刷新 Agents</button>
+            <pre id="agentsOut" class="output"></pre>
+          </section>
+          <form class="surface api-form" data-endpoint="/api/agents/init" data-job="true">
+            <h2>初始化外部 Agent</h2>
+            <label>Name <input name="name" value="my_strategy" /></label>
+            <label>Template
+              <select name="template">
+                <option value="minimal">minimal</option>
+                <option value="advanced">advanced</option>
+              </select>
+            </label>
+            <button type="submit">创建模板</button>
+          </form>
+          <form class="surface api-form" data-endpoint="/api/agents/register" data-job="true">
+            <h2>注册 Agent</h2>
+            <label>Target <input name="target" value="./my_strategy" /></label>
+            <button type="submit">注册</button>
+          </form>
+          <form class="surface api-form" data-endpoint="/api/agents/info">
+            <h2>Agent Info</h2>
+            <label>Name <input name="name" value="cass" /></label>
+            <button type="submit">查看</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="files" class="panel">
+        <form class="surface api-form wide" data-endpoint="/api/files/preview">
+          <h2>文件预览</h2>
+          <label>Path <input name="path" value="README.md" /></label>
+          <button type="submit">预览</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

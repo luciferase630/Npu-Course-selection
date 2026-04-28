@@ -76,6 +76,7 @@ class UnitExternalAgent(BaseAgent):
     def test_cli_help_and_agent_list(self) -> None:
         help_result = self.run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("gui", help_result.stdout)
         list_result = self.run_cli("agent", "list")
         self.assertEqual(list_result.returncode, 0, list_result.stderr)
         self.assertIn("cass", list_result.stdout)
