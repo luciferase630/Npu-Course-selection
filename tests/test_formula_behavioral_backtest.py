@@ -16,7 +16,12 @@ from src.analysis.formula_behavioral_backtest import (
 )
 from src.auction_mechanism.allocation import allocate_courses
 from src.models import AllocationResult, Course, CourseRequirement, Student, UtilityEdge
-from src.student_agents.advanced_boundary_formula import advanced_boundary_reference
+from src.student_agents.advanced_boundary_formula import (
+    ADVANCED_TAIL_FORMULA_POLICY,
+    advanced_boundary_reference,
+    resolve_formula_policy,
+    tail_adjust_bid,
+)
 from src.student_agents.behavioral import BehavioralProfile
 
 
@@ -162,6 +167,19 @@ class FormulaBehavioralBacktestTests(unittest.TestCase):
         self.assertGreater(hot.boundary_bid_reference, medium.boundary_bid_reference)
         self.assertLessEqual(hot.suggested_bid, 35)
         self.assertLessEqual(required.suggested_bid, 45)
+
+    def test_advanced_tail_policy_is_registered(self) -> None:
+        self.assertEqual(resolve_formula_policy(ADVANCED_TAIL_FORMULA_POLICY), ADVANCED_TAIL_FORMULA_POLICY)
+
+    def test_tail_adjustment_avoids_common_endings_within_cap(self) -> None:
+        self.assertEqual(tail_adjust_bid(20, cap_bid=35, remaining_budget=35), (23, True))
+        self.assertEqual(tail_adjust_bid(22, cap_bid=35, remaining_budget=35), (23, True))
+        self.assertEqual(tail_adjust_bid(25, cap_bid=35, remaining_budget=35), (27, True))
+        self.assertEqual(tail_adjust_bid(17, cap_bid=35, remaining_budget=35), (17, False))
+
+    def test_tail_adjustment_never_breaks_cap(self) -> None:
+        self.assertEqual(tail_adjust_bid(20, cap_bid=20, remaining_budget=35), (20, False))
+        self.assertEqual(tail_adjust_bid(20, cap_bid=35, remaining_budget=20), (20, False))
 
     def test_advanced_allocator_does_not_force_full_budget_on_free_courses(self) -> None:
         courses = {"C1": course("C1", capacity=20), "C2": course("C2", capacity=20)}

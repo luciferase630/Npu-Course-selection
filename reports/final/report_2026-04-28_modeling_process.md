@@ -217,6 +217,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 - CASS-v2 是当前最强的非 LLM 规则策略 baseline，但它是算法优化器，不一定像真实学生。
 - 低竞争不等于不用策略：多数课不挤时，聪明策略更应该省豆，把预算留给少数热点和真正重要的课。
 - 公开给学生的建议应是“用拥挤比估边界，用重要性系数调整，用尾数修正避开扎堆”，而不是让学生计算复杂 utility。
+- 如果这些策略变成公共知识，热门课会重新定价：少数人知道时优势大，人人都知道时 cutoff 上升，优势被竞争侵蚀。
 
 还不能宣称：
 
@@ -250,5 +251,6 @@ bidflow analyze cass-sensitivity --quick
 2. [公式拟合与激进稳拿校准报告](../interim/report_2026-04-28_crowding_boundary_formula_fit.md)
 3. [进阶拥挤比公式与 LLM/BA 对照报告](../interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)
 4. [CASS 策略族与敏感度分析](../interim/report_2026-04-28_cass_sensitivity_analysis.md)
+5. [策略公开后的二阶博弈报告](../interim/report_2026-04-28_public_strategy_diffusion_game.md)
 
 历史推进报告保留为实验轨迹，不代表当前最终措辞。

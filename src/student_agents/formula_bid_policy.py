@@ -8,11 +8,13 @@ from src.llm_clients.formula_extractor import compute_formula_signal
 from src.models import Course, CourseRequirement, Student, UtilityEdge
 from src.student_agents.advanced_boundary_formula import (
     ADVANCED_FORMULA_POLICY,
+    ADVANCED_TAIL_FORMULA_POLICY,
     LEGACY_FORMULA_POLICY,
     AdvancedBoundaryConfig,
     advanced_boundary_reference,
     load_advanced_boundary_config,
     resolve_formula_policy,
+    tail_adjust_bid,
 )
 from src.student_agents.behavioral import BehavioralProfile
 
@@ -70,6 +72,7 @@ class FormulaCourseSignal:
     advanced_boundary_bid_reference: int | None = None
     suggested_bid_before_compression: int = 0
     clipped_by_remaining_budget: bool = False
+    tail_adjusted: bool = False
     formula_norm: float = 0.0
     utility_norm: float = 0.0
     requirement_norm: float = 0.0
@@ -162,7 +165,7 @@ class FormulaBidAllocator:
         time_point: int,
         time_points_total: int,
     ) -> tuple[dict[str, int], list[FormulaCourseSignal], dict[str, object]]:
-        if self.policy == ADVANCED_FORMULA_POLICY:
+        if self.policy in {ADVANCED_FORMULA_POLICY, ADVANCED_TAIL_FORMULA_POLICY}:
             return self._allocate_advanced(
                 student=student,
                 selected_course_ids=selected_course_ids,
@@ -270,6 +273,14 @@ class FormulaBidAllocator:
                 importance_label=importance,
                 config=self.advanced_config,
             )
+            suggested_bid = reference.suggested_bid
+            tail_adjusted = False
+            if self.policy == ADVANCED_TAIL_FORMULA_POLICY:
+                suggested_bid, tail_adjusted = tail_adjust_bid(
+                    suggested_bid,
+                    cap_bid=reference.single_course_cap_bid,
+                    remaining_budget=student.budget_initial,
+                )
             zero_alpha = AlphaComponents(
                 base_alpha=0.0,
                 heat_alpha=0.0,
@@ -303,8 +314,9 @@ class FormulaBidAllocator:
                     importance_multiplier=reference.importance_multiplier,
                     advanced_boundary_share=reference.boundary_share,
                     advanced_boundary_bid_reference=reference.boundary_bid_reference,
-                    suggested_bid_before_compression=reference.suggested_bid,
+                    suggested_bid_before_compression=suggested_bid,
                     clipped_by_remaining_budget=reference.clipped_by_remaining_budget,
+                    tail_adjusted=tail_adjusted,
                 )
             )
         suggested = allocate_advanced_targets_with_floors(signals, baseline_bids, student.budget_initial)
@@ -505,6 +517,7 @@ def allocation_signal_metrics(signals: list[FormulaCourseSignal], budget_initial
         "formula_heat_alpha_mean": round(sum(heat_values) / len(heat_values), 8) if heat_values else None,
         "formula_raw_signal_clipped_count": sum(1 for item in signals if item.clipped_by_course_cap),
         "formula_remaining_budget_clipped_count": sum(1 for item in signals if item.clipped_by_remaining_budget),
+        "formula_tail_adjusted_count": sum(1 for item in signals if item.tail_adjusted),
         "formula_single_course_cap_hit_count": sum(1 for item in signals if item.formula_bid >= item.course_bid_cap),
         "formula_total_bid": total_bid,
         "formula_max_bid_share": round(max_bid / total_bid, 8) if total_bid else 0.0,

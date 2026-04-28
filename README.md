@@ -137,6 +137,8 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 
 尾数修正不是数学定理，而是现实投豆行为里的经验性启发：很多人为了好算会投整十、五结尾或二结尾。all-pay auction 里如果你已经决定要追一门课，多加 1-3 豆绕开拥挤尾数，可能比机械投一个“看起来整齐”的数字更合理。但这一步必须放在预算 cap 之后，不能为了凑尾数突破总预算。
 
+还有一个更重要的二阶问题：如果大家都知道这套策略，市场会重新定价。我们的扩散实验显示，少数人会估边界时优势明显；当 70%-100% 的人都会估边界，热门课 cutoff 会被一起抬高，优势会被竞争吃掉一部分。尾数避让也是一样，少数人用 13/17/23/27 可能有用，人人都用时这些尾数也会变成新拥挤点。详细见 [策略公开后的二阶博弈报告](reports/interim/report_2026-04-28_public_strategy_diffusion_game.md)。
+
 ## 这个仓库做了什么
 
 | 模块 | 说明 |
@@ -155,6 +157,7 @@ suggested_bid = min(suggested_bid, remaining_budget, single_course_cap_share * b
 - [公式拟合与激进稳拿校准报告](reports/interim/report_2026-04-28_crowding_boundary_formula_fit.md)
 - [CASS 策略族与敏感度分析](reports/interim/report_2026-04-28_cass_sensitivity_analysis.md)
 - [CASS 多学生回测](reports/interim/report_2026-04-28_cass_multifocal_llm_batch.md)
+- [策略公开后的二阶博弈报告](reports/interim/report_2026-04-28_public_strategy_diffusion_game.md)
 
 历史推进报告（historical）：
 

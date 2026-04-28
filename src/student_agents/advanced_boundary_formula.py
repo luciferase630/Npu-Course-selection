@@ -10,10 +10,12 @@ import yaml
 
 LEGACY_FORMULA_POLICY = "legacy_formula_v1"
 ADVANCED_FORMULA_POLICY = "advanced_boundary_v1"
+ADVANCED_TAIL_FORMULA_POLICY = "advanced_boundary_tail_v1"
 FORMULA_POLICY_ALIASES = {
     "bid_allocation_v1": LEGACY_FORMULA_POLICY,
     LEGACY_FORMULA_POLICY: LEGACY_FORMULA_POLICY,
     ADVANCED_FORMULA_POLICY: ADVANCED_FORMULA_POLICY,
+    ADVANCED_TAIL_FORMULA_POLICY: ADVANCED_TAIL_FORMULA_POLICY,
 }
 FORMULA_POLICIES = tuple(FORMULA_POLICY_ALIASES)
 DEFAULT_ADVANCED_FORMULA_CONFIG_PATH = Path("configs/formulas/advanced_boundary_v1.yaml")
@@ -177,6 +179,29 @@ def importance_multiplier(label: str, config: AdvancedBoundaryConfig) -> float:
         "strong": config.strong_multiplier,
         "required": config.required_multiplier,
     }[normalized]
+
+
+def tail_adjust_bid(
+    bid: int,
+    *,
+    cap_bid: int,
+    remaining_budget: int,
+    minimum_adjust_bid: int = 10,
+) -> tuple[int, bool]:
+    """Avoid common human-friendly endings when a small upward move is feasible."""
+    bid_value = max(0, int(bid))
+    limit = min(max(0, int(cap_bid)), max(0, int(remaining_budget)))
+    if bid_value < minimum_adjust_bid or bid_value >= limit:
+        return min(bid_value, limit), False
+    if bid_value % 10 not in {0, 2, 5}:
+        return min(bid_value, limit), False
+    for increment in (1, 2, 3):
+        candidate = bid_value + increment
+        if candidate > limit:
+            break
+        if candidate % 10 in {3, 7}:
+            return candidate, True
+    return min(bid_value, limit), False
 
 
 def config_to_yaml_dict(config: AdvancedBoundaryConfig, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:

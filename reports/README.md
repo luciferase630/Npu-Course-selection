@@ -9,6 +9,7 @@
 3. [进阶拥挤比公式与 LLM/BA 对照报告](interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)：比较旧公式、新公式、BA 和 LLM 使用公式后的表现。
 4. [CASS 策略族与敏感度分析](interim/report_2026-04-28_cass_sensitivity_analysis.md)：按数学建模思路比较 6 个 CASS 策略族和参数敏感性。
 5. [CASS 多学生回测](interim/report_2026-04-28_cass_multifocal_llm_batch.md)：检查 S048 之外的 focal students。
+6. [策略公开后的二阶博弈报告](interim/report_2026-04-28_public_strategy_diffusion_game.md)：分析当越来越多学生掌握边界公式和尾数避让时，市场如何重新定价。
 
 ## 补充结论
 

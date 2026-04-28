@@ -33,6 +33,7 @@ from src.student_agents.context import (
 )
 from src.student_agents.advanced_boundary_formula import (
     ADVANCED_FORMULA_POLICY,
+    ADVANCED_TAIL_FORMULA_POLICY,
     FORMULA_POLICIES,
     LEGACY_FORMULA_POLICY,
     resolve_formula_policy,
@@ -54,7 +55,7 @@ def load_tool_system_prompt(config: dict) -> str:
 
 def load_formula_tool_system_prompt(config: dict, formula_policy: str = LEGACY_FORMULA_POLICY) -> str:
     llm_context = config.get("llm_context", {})
-    if resolve_formula_policy(formula_policy) == ADVANCED_FORMULA_POLICY:
+    if resolve_formula_policy(formula_policy) in {ADVANCED_FORMULA_POLICY, ADVANCED_TAIL_FORMULA_POLICY}:
         base_path = Path(llm_context.get("formula_tool_system_prompt", "prompts/formula_informed_system_prompt.md"))
         appendix_path = Path(
             llm_context.get(

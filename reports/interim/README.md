@@ -8,6 +8,7 @@
 - [进阶拥挤比公式与 LLM/BA 对照报告](report_2026-04-28_advanced_boundary_formula_llm_comparison.md)
 - [CASS 策略族与敏感度分析](report_2026-04-28_cass_sensitivity_analysis.md)
 - [CASS 多学生回测](report_2026-04-28_cass_multifocal_llm_batch.md)
+- [策略公开后的二阶博弈报告](report_2026-04-28_public_strategy_diffusion_game.md)
 - [10% LLM cohort：拟人学生与策略 Agent 对照](report_2026-04-28_10pct_llm_humanlike_vs_strategy_agents.md)
 
 ## Historical

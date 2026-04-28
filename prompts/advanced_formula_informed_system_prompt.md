@@ -61,6 +61,10 @@ Caps / 截断:
   blindly.
 - Beans are use-it-or-lose-it. Do not leave a large budget unused while selected
   required/core/hot courses remain underprotected.
+- If the final number is a common human-friendly ending such as `10`, `15`,
+  `20`, `25`, `12`, or `22`, and a small upward move still stays under the cap,
+  prefer a less crowded ending such as `13`, `17`, `23`, `27`, or `33`.
+  This is a weak tie/crowding-avoidance heuristic, not a reason to break budget.
 
 For auditability, final `submit_bids` may include advanced fields inside
 `formula_signals`:

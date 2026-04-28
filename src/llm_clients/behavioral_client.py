@@ -471,9 +471,9 @@ class BehavioralFormulaAgentClient(BehavioralAgentClient):
         self.allocator = FormulaBidAllocator(alpha_policy=AlphaPolicy(base_seed), policy=policy)
         self._last_formula_policy_metrics: dict[str, object] = {}
 
-    def interact(self, system_prompt: str, session, max_rounds: int) -> dict:
+    def interact(self, system_prompt: str, session, max_rounds: int, **kwargs) -> dict:
         self._last_formula_policy_metrics = {}
-        result = super().interact(system_prompt, session, max_rounds)
+        result = super().interact(system_prompt, session, max_rounds, **kwargs)
         result["behavioral_formula_policy"] = self.policy
         result["behavioral_formula_policy_metrics"] = dict(self._last_formula_policy_metrics)
         return result
