@@ -55,8 +55,9 @@
 
 ```text
 先看拥挤比 r = m/n；
-再判断课程重要性：必修/毕业压力、核心强需求、特别喜欢、普通想上、可替代；
-最后做预算截断。
+再用课程重要性乘一个粗系数：必修/毕业压力、核心强需求、特别喜欢、普通想上、可替代；
+然后做预算截断；
+最后避开常见投豆尾数。
 ```
 
 为了避免“抢到了但明显多付”或“没抢到还烧豆”，我们同时报告豆子诊断：
@@ -142,7 +143,40 @@ suggested_bid =
 
 这套公式的公开定位是“激进稳拿”：整体 coverage 目标在 90%-95%，同时用 cap 避免旧公式式爆炸。它不是现实录取保证，也不能替代选课策略。
 
-## 7. CASS 建模
+## 7. 现实可执行修正：重要性系数与尾数
+
+真实学生最难知道的是全体竞争者的偏好分布。你不知道别人喜欢哪位老师，也不知道别人是否被毕业要求卡住。因此公开策略不能要求学生估计全校 utility，只能使用他们看得到的信号。
+
+最重要的公开信号是拥挤比：
+
+```text
+r = m / n
+```
+
+如果一门课已经爆满，`r` 代表很多人愿意把它放进候选集合。它不能告诉你每个人会投多少，但可以作为竞争者投豆边界的起点。
+
+学生端可执行版本是：
+
+```text
+base_bid = budget * boundary_share
+final_bid = base_bid * importance_multiplier
+final_bid = min(final_bid, remaining_budget, single_course_cap)
+```
+
+重要性系数只需要粗分：
+
+| 判断 | 系数 |
+| --- | ---: |
+| 可替代课 | `0.85` |
+| 普通想上 | `1.00` |
+| 特别喜欢/核心课 | `1.15` |
+| 必修/毕业压力 | `1.30` |
+
+还有一个现实行为修正：很多人会投整十、五结尾，或者 `12`、`22` 这种好算数字。若预算允许，最终 bid 可以避开这些拥挤尾数，改用 `13`、`17`、`23`、`27`、`33` 这类不那么整齐的数。
+
+这不是模型定理，而是行为层面的 tie/crowding avoidance。它只能在已经决定追课、且不突破预算 cap 时使用，不能为了尾数修正而 all-in。
+
+## 8. CASS 建模
 
 CASS 的目标是：在给定市场中最大化 focal student 的 `course_outcome_utility`，并尽量减少无效投豆。
 
@@ -162,7 +196,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 4. 用单课 cap 和不强制花满预算避免 all-in。
 5. 用多场景、多 focal、多参数扰动做稳健性检查。
 
-## 8. 实验模式
+## 9. 实验模式
 
 本项目使用两种评估模式，不能混用：
 
@@ -173,7 +207,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 
 报告统一要求分开表述：replay 胜利只说明固定背景响应更强；online 胜利才说明真实信息路径下也更强。
 
-## 9. 当前结论边界
+## 10. 当前结论边界
 
 当前最稳健的结论是：
 
@@ -182,6 +216,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 - LLM + 公式的优势主要来自“学会克制、分散和替代”，不是机械照抄公式。
 - CASS-v2 是当前最强的非 LLM 规则策略 baseline，但它是算法优化器，不一定像真实学生。
 - 低竞争不等于不用策略：多数课不挤时，聪明策略更应该省豆，把预算留给少数热点和真正重要的课。
+- 公开给学生的建议应是“用拥挤比估边界，用重要性系数调整，用尾数修正避开扎堆”，而不是让学生计算复杂 utility。
 
 还不能宣称：
 
@@ -189,7 +224,7 @@ selection_score = course_value - 1.8 * expected_bid - optional_hot_penalty
 - 单靠 `m/n` 就能确定最终 bid。
 - 合成数据 cutoff 可以直接迁移到现实。
 
-## 10. 复现入口
+## 11. 复现入口
 
 核心命令：
 
@@ -207,7 +242,7 @@ bidflow analyze cass-sensitivity --quick
 - [BidFlow 沙盒指南](../../docs/sandbox_guide.md)
 - [生成器场景说明](../../docs/generator_scenarios.md)
 
-## 11. 报告阅读顺序
+## 12. 报告阅读顺序
 
 建议先读：
 
