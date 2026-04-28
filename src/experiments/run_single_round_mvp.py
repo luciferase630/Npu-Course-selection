@@ -698,6 +698,11 @@ def main() -> None:
     parser.add_argument("--background-formula-share", type=float, default=0.0)
     parser.add_argument("--background-formula-exclude-student-id", default=None)
     parser.add_argument("--background-formula-policy", default="bid_allocation_v1", choices=["bid_allocation_v1"])
+    parser.add_argument(
+        "--cass-policy",
+        default="cass_v2",
+        choices=["cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_logit", "cass_v2"],
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -750,7 +755,11 @@ def main() -> None:
     )
     try:
         client_by_agent = {
-            agent_type: build_llm_client(agent_type, base_seed=seed)
+            agent_type: build_llm_client(
+                agent_type,
+                base_seed=seed,
+                cass_policy=args.cass_policy if agent_type == "cass" else None,
+            )
             for agent_type in sorted(set(agent_type_by_student.values()))
             if agent_type != "scripted_policy"
         }
@@ -1443,6 +1452,7 @@ def main() -> None:
             1 for agent_type in agent_type_by_student.values() if agent_type == "behavioral"
         ),
         "background_formula_policy": args.background_formula_policy if background_formula_students else "",
+        "cass_policy": args.cass_policy if "cass" in agent_type_by_student.values() else "",
         "background_formula_student_ids": sorted(background_formula_students),
         "agent_type_counts": dict(sorted(Counter(agent_type_by_student.values()).items())),
         "n_students": len(students),

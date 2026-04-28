@@ -27,7 +27,7 @@ from src.analysis.formula_behavioral_backtest import (
     write_jsonl,
 )
 from src.models import BidState
-from src.student_agents.cass import cass_select_and_bid
+from src.student_agents.cass import cass_select_and_bid, normalize_cass_params
 from src.student_agents.context import derive_requirement_penalties, group_requirements_by_student
 
 
@@ -133,6 +133,8 @@ def run_backtest(
     data_dir: str | None = None,
     seed_offset: int = 0,
     allocation_seed: int | None = None,
+    cass_policy: str = "cass_v2",
+    cass_params: dict[str, float | int] | None = None,
     results_table: str | Path = "outputs/tables/cass_focal_backtest_results.csv",
     bean_table: str | Path = "outputs/tables/cass_focal_backtest_bean_diagnostics.csv",
 ) -> dict[str, object]:
@@ -178,6 +180,8 @@ def run_backtest(
         previous_state=previous_state,
         time_point=time_points_total,
         time_points_total=time_points_total,
+        policy=cass_policy,
+        cass_params=cass_params,
     )
     cass_decisions = build_cass_decisions(baseline_decisions, focal_student_id, cass.bids)
 
@@ -223,7 +227,8 @@ def run_backtest(
         "baseline_run_dir": str(baseline_dir),
         "data_dir": str(data_dir or paths["students"].parent),
         "focal_student_id": focal_student_id,
-        "policy": "cass_v1",
+        "policy": cass.policy,
+        "cass_params_json": json.dumps(normalize_cass_params(cass_params), sort_keys=True),
         "background_fixed": True,
         "course_selection_fixed": False,
         "base_seed": base_seed,
@@ -333,9 +338,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--seed-offset", type=int, default=0)
     parser.add_argument("--allocation-seed", type=int, default=None)
+    parser.add_argument(
+        "--cass-policy",
+        default="cass_v2",
+        choices=["cass_v1", "cass_smooth", "cass_value", "cass_balanced", "cass_frontier", "cass_logit", "cass_v2"],
+    )
+    parser.add_argument(
+        "--cass-param",
+        action="append",
+        default=[],
+        help="CASS hyperparameter override in key=value form. May be repeated.",
+    )
     parser.add_argument("--results-table", default="outputs/tables/cass_focal_backtest_results.csv")
     parser.add_argument("--bean-table", default="outputs/tables/cass_focal_backtest_bean_diagnostics.csv")
     return parser.parse_args()
+
+
+def parse_cass_params(values: list[str]) -> dict[str, float]:
+    params: dict[str, float] = {}
+    for item in values:
+        if "=" not in item:
+            raise ValueError(f"--cass-param must use key=value form: {item}")
+        key, raw_value = item.split("=", 1)
+        params[key.strip()] = float(raw_value)
+    return params
 
 
 def main() -> None:
@@ -348,6 +374,8 @@ def main() -> None:
         data_dir=args.data_dir,
         seed_offset=args.seed_offset,
         allocation_seed=args.allocation_seed,
+        cass_policy=args.cass_policy,
+        cass_params=parse_cass_params(args.cass_param),
         results_table=args.results_table,
         bean_table=args.bean_table,
     )
@@ -356,4 +384,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

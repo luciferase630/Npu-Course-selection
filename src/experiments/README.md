@@ -1,5 +1,7 @@
 # experiments
 
+Compatibility note: new public workflows should prefer `bidflow session run`. The modules in this directory remain supported so existing reports, scripts, and tests keep working during the BidFlow migration.
+
 实验入口、批量运行、效用指标汇总、轮内动态投豆仿真、公式信息冲击对照实验和结果保存逻辑。
 
 主入口：

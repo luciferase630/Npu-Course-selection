@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from src.models import BidState, Course, CourseRequirement, Student, UtilityEdge
-from src.student_agents.cass import cass_select_and_bid
+from src.student_agents.cass import DEFAULT_CASS_POLICY, cass_select_and_bid, resolve_cass_policy
 from src.student_agents.tool_env import StudentSession
 
 
@@ -15,8 +15,15 @@ class CASSAgentClient:
     courses with bounded bids.
     """
 
-    def __init__(self, base_seed: int = 20260425) -> None:
+    def __init__(
+        self,
+        base_seed: int = 20260425,
+        policy: str = DEFAULT_CASS_POLICY,
+        cass_params: dict[str, float | int] | None = None,
+    ) -> None:
         self.base_seed = base_seed
+        self.policy = resolve_cass_policy(policy)
+        self.cass_params = cass_params or {}
 
     def complete(self, system_prompt: str, interaction_payload: dict) -> dict:
         private = interaction_payload["student_private_context"]
@@ -59,6 +66,8 @@ class CASSAgentClient:
             previous_state=previous_state,
             time_point=int(state["time_point"]),
             time_points_total=int(state.get("time_points_total", state["time_point"])),
+            policy=self.policy,
+            cass_params=self.cass_params,
         )
         return self._output_from_decision(
             student.student_id,
@@ -81,13 +90,15 @@ class CASSAgentClient:
             previous_state=session.state,
             time_point=session.time_point,
             time_points_total=session.time_points_total,
+            policy=self.policy,
+            cass_params=self.cass_params,
         )
         bids = [{"course_id": course_id, "bid": bid} for course_id, bid in sorted(decision.bids.items())]
         check = session.call_tool("check_schedule", {"bids": bids})
         submit = session.call_tool("submit_bids", {"bids": bids}) if check.get("feasible") else check
         explanation = (
-            "CASS selected courses using local utility, requirement pressure, and m/n crowding tiers; "
-            "free/light courses receive minimal bids and required/hot courses receive bounded protection."
+            f"CASS policy={self.policy} selected courses using local utility, requirement pressure, and m/n crowding; "
+            "low-pressure courses receive minimal bids and valuable crowded courses receive bounded protection."
         )
         request = {
             "tool_name": "submit_bids",
@@ -184,7 +195,7 @@ class CASSAgentClient:
             "student_id": student_id,
             "time_point": time_point,
             "bids": bids,
-            "overall_reasoning": "CASS saves beans on free/light courses and protects required or crowded courses.",
+            "overall_reasoning": f"CASS policy={self.policy} saves beans on low-pressure courses and protects valuable crowded courses.",
             "cass_policy_metrics": diagnostics,
         }
 
@@ -236,4 +247,3 @@ def _requirements_from_private(private_context: dict) -> list[CourseRequirement]
         )
         for row in private_context.get("course_code_requirements", [])
     ]
-

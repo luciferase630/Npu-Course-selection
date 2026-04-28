@@ -1,5 +1,7 @@
 # scripts
 
+Compatibility note: these scripts remain useful for exact historical reproduction. New external users should start with `bidflow --help` and `docs/sandbox_guide.md`.
+
 这里放可复现实验的 PowerShell 入口。脚本默认从仓库根目录运行，并调用 `python -m ...` 模块入口。
 
 推荐使用分组目录：
