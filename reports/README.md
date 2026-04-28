@@ -14,6 +14,7 @@
 7. [CASS 策略族与敏感度分析](interim/report_2026-04-28_cass_sensitivity_analysis.md)：解释 `cass_v1` 的硬分段计算、连续压力曲线、6 个 CASS 策略族和参数敏感性。
 8. [CASS 多学生回测](interim/report_2026-04-28_cass_multifocal_llm_batch.md)：检查 S048 之外的 focal students。
 9. [策略公开后的二阶博弈报告](interim/report_2026-04-28_public_strategy_diffusion_game.md)：分析当越来越多学生掌握边界公式和尾数避让时，市场如何重新定价。
+10. [真实三轮选课动态博弈研究方向](research_path/future_research_three_round_selection_game.md)：说明为什么真实三轮选课不是三次同质重复，并提出第一轮退款、第二轮新热点、第三轮锁定风险的后续建模计划。
 
 ## 补充结论
 

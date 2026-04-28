@@ -261,6 +261,28 @@ p ≈ -0.3% + 3.82% × 3.43 + 0.98% × 1.39 + 3% ≈ 17.2%
 
 详细见 [策略公开后的二阶博弈报告](reports/interim/report_2026-04-28_public_strategy_diffusion_game.md)。
 
+## 进一步研究：真实三轮选课不是重复三次
+
+当前 BidFlow 的 `time_points=3` 更像“一轮开奖前的三次观察和调整”，还不是完整真实三轮选课。
+
+如果现实规则是前两轮投豆、第一轮没中的豆子会返回，那么第一轮失败者第二轮确实有预算优势。但这个优势是片面的：第一轮很多课已经被选完，第二轮可选课程池会缩水，高质量替代课减少，时间表也可能被第一轮录取结果锁住。
+
+第二轮也不是第一轮的简单重复。它可能一边剩下很多低竞争课，一边新开少数高热度课程，比如品酒、热门通识、体验课或特殊实践课。这意味着第二轮会同时出现“剩余课很便宜”和“新热点很贵”。
+
+第三轮如果是补选且不能退课，问题又变了。它不只是“有没有课上”，还包括“会不会被不喜欢的课锁住”。一个老师、时间、考核方式都不适合自己的课，可能不是救命课，而是枷锁。
+
+所以后续真正要研究的是跨轮动态策略：
+
+```text
+第一轮该不该抢？
+失败后豆子会不会回来？
+第二轮还有没有替代品？
+新开热点课会不会改变边界？
+第三轮选上以后能不能退出？
+```
+
+详细议程见 [真实三轮选课动态博弈研究方向](reports/research_path/future_research_three_round_selection_game.md)。
+
 ## 最后一点自评
 
 如果以后回头看这项研究，我最想先提醒读者的是：这里的公式和策略不是“选课秘籍”，而是一套把混乱经验说清楚的建模语言。它把“这门课爆满了，我该不该多投”拆成三件事：拥挤比给出公共竞争信号，课程重要性决定安全垫，预算截断防止一门课把你打爆。
@@ -291,6 +313,7 @@ p ≈ -0.3% + 3.82% × 3.43 + 0.98% × 1.39 + 3% ≈ 17.2%
 - [论文式总稿：投豆选课中的非对称信息 all-pay auction](reports/final/paper_2026-04-28_course_bidding_math_model.md)
 - [研究路径总览：路线、建模入口、弯路修正](reports/research_path/README.md)
 - [报告逻辑与引用关系图](reports/research_path/report_logic_and_citation_map.md)
+- [真实三轮选课动态博弈研究方向](reports/research_path/future_research_three_round_selection_game.md)
 - [实验总账与指标口径报告](reports/final/report_2026-04-28_experiment_matrix_and_metrics.md)
 - [投豆选课建模过程报告](reports/final/report_2026-04-28_modeling_process.md)
 - [报告阅读索引](reports/README.md)
@@ -653,6 +676,28 @@ Read the sandbox guide for data structures, agent inputs, generated preference t
 - [BidFlow sandbox guide](docs/sandbox_guide.md)
 - [Generator scenarios](docs/generator_scenarios.md)
 - [Reproducible experiments](docs/reproducible_experiments.md)
+
+### Future Research: A Real Three-Round Mechanism
+
+The current BidFlow `time_points=3` setting is closer to three observations before one final allocation. It is not yet a full model of a real three-round selection system.
+
+A realistic three-round system has different strategic structure:
+
+1. In round one, failed bids may be refunded. This gives unsuccessful students more liquidity in round two, but many good courses may already be gone.
+2. Round two is not just a repeat of round one. It may contain leftover low-demand courses and newly opened high-demand courses such as wine tasting, popular general electives, or special practice courses.
+3. Round three may be an add-only make-up selection round. If students cannot drop admitted courses, then an unwanted course can become a lock-in constraint rather than a benefit.
+
+The next research step is a dynamic model:
+
+```text
+Should I fight in round one?
+Will failed beans return?
+Will substitutes still exist in round two?
+Are new hotspots released later?
+Can I drop an unwanted course in round three?
+```
+
+See [future research on the three-round selection game](reports/research_path/future_research_three_round_selection_game.md).
 
 ### Final Caveat
 

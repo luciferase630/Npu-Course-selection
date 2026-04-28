@@ -40,6 +40,7 @@ flowchart TD
   CassMulti["CASS 多 focal 在线对照"]
   LlmCohort["10% LLM cohort 拟人性实验"]
   PublicGame["策略公开后二阶博弈"]
+  FutureRounds["三轮选课动态博弈：后续研究"]
 
   Reviews["reviews：审阅、渲染、实现复盘"]
   Historical["historical：早期四臂、mix30、旧公式报告"]
@@ -54,9 +55,11 @@ flowchart TD
   Matrix --> CassMulti
   Matrix --> LlmCohort
   Matrix --> PublicGame
+  README --> FutureRounds
   Process --> FormulaFit
   Process --> CassSensitivity
   Process --> PublicGame
+  PublicGame --> FutureRounds
   Reviews -.质量审阅.-> Paper
   Reviews -.质量审阅.-> Matrix
   Historical -.追溯路径.-> Process
@@ -74,6 +77,7 @@ flowchart TD
 | CASS-v2 是当前最强规则基准 | [CASS 策略族与敏感度](../interim/report_2026-04-28_cass_sensitivity_analysis.md) | [CASS 多学生回测](../interim/report_2026-04-28_cass_multifocal_llm_batch.md) |
 | CASS 更会赢，LLM 更像人 | [10% LLM cohort](../interim/report_2026-04-28_10pct_llm_humanlike_vs_strategy_agents.md) | [大模型学生与策略 Agent 发现](../final/findings_2026-04-28_llm_humanlike_vs_strategy_agents.md) |
 | 策略公开后热门课会重新定价 | [二阶博弈报告](../interim/report_2026-04-28_public_strategy_diffusion_game.md) | [论文式总稿](../final/paper_2026-04-28_course_bidding_math_model.md) |
+| 真实三轮选课需要独立建模，不能直接套当前单轮结论 | [三轮选课动态博弈研究方向](future_research_three_round_selection_game.md) | [二阶博弈报告](../interim/report_2026-04-28_public_strategy_diffusion_game.md) |
 | 所有实验只基于合成数据，不含真实隐私 | [根 README](../../README.md) | [建模过程报告](../final/report_2026-04-28_modeling_process.md) |
 | 历史报告有些结论已被收紧 | [走过的弯路与修正](wrong_turns_and_lessons.md) | [报告渲染与 CASS 建模复盘](../reviews/review_2026-04-28_report_rendering_and_cass_modeling.md) |
 
@@ -195,6 +199,7 @@ Historical 报告包括早期 S048 四臂实验、旧公式 baseline、mix30 公
 2. [新旧公式与 LLM/BA 对照](../interim/report_2026-04-28_advanced_boundary_formula_llm_comparison.md)
 3. [CASS 策略族与敏感度](../interim/report_2026-04-28_cass_sensitivity_analysis.md)
 4. [策略公开后二阶博弈](../interim/report_2026-04-28_public_strategy_diffusion_game.md)
+5. [真实三轮选课动态博弈研究方向](future_research_three_round_selection_game.md)
 
 想看研究如何走到现在：
 
