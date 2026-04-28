@@ -45,7 +45,7 @@ This paper studies course bidding as an asymmetric-information all-pay auction. 
 现实里流传的投豆公式是：
 
 $$
-f(m,n,\alpha)=(1+\alpha)\sqrt{m-n}\,e^{m/n}
+f(m,n,\alpha)=(1+\alpha)\cdot\sqrt{m-n}\cdot e^{m/n}
 $$
 
 它把排队人数和容量放进一个快速增长的函数里。本文研究的出发点不是简单否定它，而是回答两个问题：
@@ -164,20 +164,13 @@ s_0=
 \right]_0^c
 $$
 
-$$
-[x]_0^c=\min(c,\max(0,x))
-$$
+这里的截断含义是：如果公式值低于 `0`，按 `0` 处理；如果公式值高于单课上限 `c`，按 `c` 处理。
 
-$$
-\hat b=
-\min\left(
-R,\,
-cB,\,
-\left\lceil B\cdot s_0\cdot \lambda \right\rceil
-\right)
-$$
+最终建议投豆不在首页用复杂 `min` 公式展示，而是按三道闸门解释：先算
+`ceil(B * s0 * lambda)`，再和剩余预算 `R`、单课上限 `cB` 比较，三者取最小。
+其中 `R` 是剩余预算，`c` 是单课预算上限占比，`lambda` 是课程重要性系数。
 
-其中 $R$ 是剩余预算，$c$ 是单课预算上限占比，$\lambda$ 是课程重要性系数。
+README 中给学生看的简化版把上式改写成百分比：先用 `p≈-0.3%+3.82% ln(1+d)+0.98% ln(1+r)+3%` 估基础边界，再乘课程重要性系数，最后在“公式数、剩余预算、单课上限”三者中取最小。
 
 拟合参数：
 

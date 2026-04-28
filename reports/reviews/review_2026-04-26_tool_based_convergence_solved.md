@@ -154,18 +154,18 @@ if self.rejected_submit_requires_check:
 估算 token 量：
 - 混合中英文，平均约 0.3-0.5 tokens/字符
 - 65,861 字符 ≈ **20k-33k tokens**
-- MiMo-V2-Pro 上下文上限：1M tokens（256K 以内 $1/百万，256K-1M $2/百万）
+- MiMo-V2-Pro 上下文上限：1M tokens（256K 以内 USD 1/百万，256K-1M USD 2/百万）
 - **完全在安全范围内**
 
 但如果跑 40×200×5：
 - 40 学生 × 5 时间点 × 7 轮 ≈ 1400 次 API 调用
 - 每次输入约 20k-30k tokens，输出约 500 tokens
 - 成本估算：
-  - 输入：1400 × 25k × $2/1M = $70
-  - 输出：1400 × 0.5k × $3/1M = $2.1
-  - **总计约 $72**
+  - 输入：1400 × 25k × USD 2/1M = USD 70
+  - 输出：1400 × 0.5k × USD 3/1M = USD 2.1
+  - **总计约 USD 72**
 
-这比 single-shot（~68 次调用，每次 ~22k tokens，约 $3-4）贵约 20 倍。但 tool-based 的信息透明设计和行为可观察性具有独特的研究价值。
+这比 single-shot（~68 次调用，每次 ~22k tokens，约 USD 3-4）贵约 20 倍。但 tool-based 的信息透明设计和行为可观察性具有独特的研究价值。
 
 ---
 
@@ -214,7 +214,7 @@ openai_client.py（传输层）
 |---|---|
 | 调用量 | 40 学生 × 5 时间点 × 7 轮 ≈ 1400 次 API 调用 |
 | 总 token | ~35M 输入 + ~0.7M 输出 |
-| 成本 | ~$72 |
+| 成本 | ~USD 72 |
 | 时间 | ~15-20 分钟（含网络延迟） |
 | 目标 | fallback=0，round_limit=0 |
 | 关键观察 | admission_rate（动态竞争下）、beans_paid、net utility |

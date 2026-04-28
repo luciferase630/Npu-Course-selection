@@ -129,7 +129,7 @@ else:
 | json_failure_count | **0** | ✅ |
 | constraint_violation_rejected | **0** | ✅ |
 | elapsed_seconds | **1714.66** (~28.6 分钟) | 合理 |
-| llm_api_total_tokens | **9,330,644** | 成本约 $10-15 |
+| llm_api_total_tokens | **9,330,644** | 成本约 USD 10-15 |
 
 ### 2.2 每时间点轮次分布
 
@@ -194,7 +194,7 @@ Round 10: submit_bids           → ❌ ERROR（protocol_error: rejected 后没 
 | 约束满足 | A+ | 最终 0 冲突、0 超学分、0 超预算 |
 | 协议遵循 | B+ | 1 个 late-round 协议违反，99.5% 遵循 |
 | 解释记录 | B+ | 93.6% coverage，缺失因 JSON 截断 |
-| 成本效率 | A+ | $10-15，远低于预期 |
+| 成本效率 | A+ | USD 10-15，远低于预期 |
 
 ### 4.2 实验科学有效性：D+
 

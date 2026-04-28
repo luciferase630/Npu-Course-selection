@@ -21,7 +21,7 @@
 | tool_round_limit | 1 | 与 fallback 同一人 |
 | admission_rate | **1.0** | ❌ 无竞争失败（数据集设计缺陷） |
 | average_tool_rounds | 4.32 | 合理 |
-| llm_api_total_tokens | 9,330,644 | 成本 ~$10-15 |
+| llm_api_total_tokens | 9,330,644 | 成本 ~USD 10-15 |
 
 ### 1.2 admission_rate=1.0 的根因
 

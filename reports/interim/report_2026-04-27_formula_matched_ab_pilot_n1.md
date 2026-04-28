@@ -1,7 +1,7 @@
 # Formula Strategy Matched A/B 试点报告（N=1）
 
 **实验时间**：2026-04-27  
-**模型**：gpt-5.4 via sub2.de5.net（$0.71/M tokens 档位）  
+**模型**：gpt-5.4 via sub2.de5.net（USD 0.71/M tokens 档位）
 **数据集**：medium 100×80×3（100 students, 80 sections, 3 time points）  
 **实验设计**：Matched A/B，单 focal student（S001），behavioral 背景板  
 **温度**：`OPENAI_TEMPERATURE=0`  
@@ -225,8 +225,8 @@ B Run 中 S001 的 formula signal 记录：
 | 局限 | 说明 |
 |------|------|
 | B run tokens 比 A run 多 76% | 公式 prompt 更长 + LLM 输出更多（formula_signals 数组）|
-| 按中转站 $0.71/M 计算 | A run ≈ $0.039，B run ≈ $0.068，单次 focal pair 差 $0.029 |
-| 扩展到 20 对 matched pairs | 额外成本约 $0.58，可接受 |
+| 按中转站 USD 0.71/M 计算 | A run ≈ USD 0.039，B run ≈ USD 0.068，单次 focal pair 差 USD 0.029 |
+| 扩展到 20 对 matched pairs | 额外成本约 USD 0.58，可接受 |
 
 ---
 

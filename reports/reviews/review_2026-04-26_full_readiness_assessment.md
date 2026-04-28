@@ -214,7 +214,7 @@ protocol_instruction                    must_fix            beans_paid
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |---|---|---|---|
-| API 余额不足（40×200×5 约 $80-90） | 中 | 实验中断 | 充值后跑；或分批次跑（先跑 TP1-2，再跑 TP3-5）|
+| API 余额不足（40×200×5 约 USD 80-90） | 中 | 实验中断 | 充值后跑；或分批次跑（先跑 TP1-2，再跑 TP3-5）|
 | teacher_extreme_mix 影响实验结果 | 低 | 1 个老师的课 utility 两极分化 | 在分析时备注；不影响实验运行 |
 | decision_explanation 增加 token 成本 | 中 | 成本增加 10-20% | 可接受范围内 |
 | 网络超时（200 规模下 15-20 分钟） | 低 | 实验中断 | 已加 OPENAI_TIMEOUT_SECONDS=60 |
@@ -226,18 +226,18 @@ protocol_instruction                    must_fix            beans_paid
 | 调用次数 | 40 学生 × 5 时间点 × 7 轮 ≈ 1400 次 |
 | 输入 tokens/次 | ~20k-30k（含累积上下文 + decision_explanation） |
 | 输出 tokens/次 | ~500（含 tool_request + decision_explanation，比之前多 ~100） |
-| 输入成本（MiMo-V2-Pro） | ~$1-2/百万 tokens |
-| 输出成本 | ~$3/百万 tokens |
-| **总估算** | **~$80-100** |
+| 输入成本（MiMo-V2-Pro） | ~USD 1-2/百万 tokens |
+| 输出成本 | ~USD 3/百万 tokens |
+| **总估算** | **~USD 80-100** |
 
 ### 4.4 结论
 
 **可以跑 40×200×5 MiMo 全量。**
 
 前提条件：
-1. API 余额 >= $100
+1. API 余额 >= USD 100
 2. 跑之前先确认 audit 的 teacher_extreme_mix 问题（换 seed 或放宽标准）
-3. 建议分批次跑：先跑 TP1-2（约 $30-40），确认结果正常后再跑 TP3-5
+3. 建议分批次跑：先跑 TP1-2（约 USD 30-40），确认结果正常后再跑 TP3-5
 
 ---
 
@@ -285,7 +285,7 @@ protocol_instruction                    must_fix            beans_paid
 
 ### 全量 MiMo：✅ 可以跑
 - 技术条件全部就绪
-- 预估成本 $80-100
+- 预估成本 USD 80-100
 - 建议分批次跑（TP1-2 先验证，再跑 TP3-5）
 
 ---
@@ -294,7 +294,7 @@ protocol_instruction                    must_fix            beans_paid
 
 | 优先级 | 行动 | 预计时间 |
 |---|---|---|
-| **P0** | 确认 API 余额 >= $100 | 即时 |
+| **P0** | 确认 API 余额 >= USD 100 | 即时 |
 | **P0** | 跑 40×200×5 MiMo 全量（或分批次 TP1-2 先） | 15-20 分钟 |
 | **P1** | 修复 teacher_extreme_mix（换 seed 或放宽 audit 标准到 <=2） | 10 分钟 |
 | **P2** | 从 llm_decision_explanations.jsonl 做首批分析：explanation 覆盖率、平均长度、关键词分布 | 30 分钟 |

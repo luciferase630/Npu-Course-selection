@@ -216,7 +216,7 @@ $$
 图片中的公式是：
 
 $$
-f(m,n,\alpha)=(1+\alpha)\sqrt{m-n}\cdot e^{m/n}
+f(m,n,\alpha)=(1+\alpha)\cdot\sqrt{m-n}\cdot e^{m/n}
 $$
 
 其中：
