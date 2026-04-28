@@ -212,6 +212,25 @@ P001,Computer Science,Computer
 - 真实学生通常只有模糊偏好，不会知道这种精确数字。
 - 如果把结果翻译成学生建议，应该用“必修/毕业压力、强烈喜欢、普通想上、可替代”这种粗分层。
 
+这张表就是很多人直觉里说的“偏好表”，但要分清两层：
+
+| 层次 | 谁能用 | 用法 |
+| --- | --- | --- |
+| 原始 CSV 偏好表 | 研究者、生成器、离线分析脚本 | 用来构造合成市场和计算策略结果 |
+| Agent 运行时偏好 | 当前学生自己的 agent | 只通过 `context.courses[*].utility` 暴露当前学生对可选课程的偏好 proxy |
+| 其他学生偏好 | 正常 agent 不能用 | 不能偷看别人的 `utility`，否则就不是信息受限的选课策略 |
+
+生成器不是随便给每条边拍一个随机数。当前 `profile_affinity_utility_v1` 会综合几类因素：
+
+- 学生培养方案和课程代码是否相关。
+- 课程类别，例如基础课、专业核心、专业选修、通识、英语、体育、实验研讨。
+- 教师质量和课程代码质量的合成差异。
+- 上课时间偏好，例如有人不喜欢中午或太晚的课。
+- 年级阶段、必修要求、替代组选项。
+- 少量随机扰动，让同专业学生也不完全一样。
+
+所以，偏好表的作用是让沙盒里的学生有“像人一样不完全相同”的选择倾向。它不是现实教务数据，也不是现实学生真的知道的一张表。
+
 ### 3.7 metadata
 
 | 文件 | 作用 |
@@ -263,6 +282,71 @@ bidflow market generate `
   --n-course-sections 240 `
   --seed 20260428
 ```
+
+### 4.1 我想生成一套“不是仓库默认数据”的新市场
+
+最稳的做法是复制一个 YAML 场景，再改参数：
+
+```powershell
+Copy-Item configs/generation/research_large_high.yaml configs/generation/my_market.yaml
+notepad configs/generation/my_market.yaml
+```
+
+然后用新场景生成：
+
+```powershell
+bidflow market generate `
+  --scenario configs/generation/my_market.yaml `
+  --output data/synthetic/my_market
+```
+
+一个场景文件大概控制这些东西：
+
+| 配置块 | 控制什么 |
+| --- | --- |
+| `shape` | 学生数、教学班数、培养方案数、课程代码数 |
+| `catalog.category_counts` | 各类课程数量，例如基础课、专业核心、通识、英语、体育 |
+| `eligibility.eligible_bounds` | 每个学生大概能选多少教学班 |
+| `competition_profile` | 整体竞争强度：高竞争、中等竞争、稀疏热点 |
+| `policies.requirements` | 培养方案要求生成策略 |
+| `policies.utility` | 偏好表生成策略 |
+
+如果只是做一个新实验，优先用 CLI 覆盖，不用改 YAML：
+
+```powershell
+bidflow market generate `
+  --scenario research_large_high `
+  --output data/synthetic/research_large_600x180 `
+  --n-students 600 `
+  --n-course-sections 180 `
+  --n-profiles 6 `
+  --n-course-codes 120 `
+  --competition-profile medium `
+  --seed 20260428
+```
+
+如果你要系统性改“培养方案结构、课程分布、偏好表生成机制”，再去改 YAML。详细字段见 [generator_scenarios.md](generator_scenarios.md)。
+
+### 4.2 新数据生成后怎么确认不是乱的
+
+生成之后至少跑三步：
+
+```powershell
+bidflow market validate data/synthetic/my_market
+bidflow market info data/synthetic/my_market
+python -m src.data_generation.audit_synthetic_dataset --data-dir data/synthetic/my_market
+```
+
+重点看：
+
+- 学生数、课程数、培养方案数是否符合预期。
+- `student_course_utility_edges.csv` 是否是完整边表，也就是学生数乘教学班数。
+- 每个学生 eligible 的课程数量是否落在 `eligible_bounds`。
+- 每个学生的 required course_code 是否至少有一个 eligible section。
+- 容量和竞争强度是否符合你的实验目的。
+- `generation_metadata.json` 里是否记录了 scenario、seed 和 effective parameters。
+
+不要只改学生数，不看容量和 eligible 范围。否则可能得到一个“所有人都随便上”或“所有人都没课上”的市场，策略比较会失真。
 
 注意：`market validate` 目前是轻量 schema/load 检查，不等价于完整竞争强度审计。完整 audit 仍可使用旧入口：
 
@@ -320,13 +404,94 @@ Agent 只能看到局部信息：
 | `course.previous_selected` | 之前是否选过 |
 | `course.previous_bid` | 之前投豆 |
 
+这些字段和 market CSV 的关系如下：
+
+| Agent 字段 | 主要来自哪里 | 策略含义 |
+| --- | --- | --- |
+| `course.capacity` | `courses.csv.capacity` | 这门课能录多少人 |
+| `course.observed_waitlist_count` | 当前 session 状态 | 现在有多少人也在排这门课 |
+| `course.crowding_ratio` | 运行时计算 | 当前拥挤比，用来估边界 |
+| `course.utility` | 当前学生的 `student_course_utility_edges.csv` | 沙盒偏好 proxy，只代表当前学生自己 |
+| `course.credit` | `courses.csv.credit` | 学分约束和性价比判断 |
+| `course.time_slot` | `courses.csv.time_slot` | 课表冲突判断 |
+| `context.requirements` | `student_course_code_requirements.csv` | 必修、强选、毕业压力 |
+| `context.previous_bids` | 当前 session 历史 | T2/T3 调整时看自己之前投了多少 |
+
+换句话说，写策略时能用的数据分成三类：
+
+| 类型 | 可以用吗 | 例子 |
+| --- | --- | --- |
+| 当前学生自己的私有信息 | 可以 | 自己的预算、学分上限、培养方案要求、自己的偏好 proxy |
+| 当前可见市场信息 | 可以 | 某课容量、当前可见排队人数、拥挤比 |
+| 未来或他人隐藏信息 | 不可以 | 其他学生具体投豆、其他学生偏好表、最终录取边界、开奖后结果 |
+
 Agent 看不到：
 
 - 其他学生的具体 bids。
 - 最终录取边界。
 - 全局真实偏好分布。
+- 其他学生的 `student_course_utility_edges.csv`。
 
-### 5.2 最小策略模板
+如果你要写“更贴近现实学生”的策略，可以选择完全不用 `course.utility`，只用：
+
+- `course.crowding_ratio`
+- `course.capacity`
+- `course.observed_waitlist_count`
+- `context.requirements`
+- `course.credit`
+- `course.time_slot`
+- 自己手工给课程分成“必修/强偏好/普通/可替代”
+
+如果你要写“算法上限”策略，可以使用 `course.utility`。但报告里必须说清楚：这是沙盒偏好 proxy，不是现实学生可精确观测的数据。
+
+### 5.2 两种策略口径：用偏好 proxy / 不用偏好 proxy
+
+沙盒里建议把策略分成两类，不要混着讲：
+
+| 口径 | 用哪些数据 | 适合回答什么问题 |
+| --- | --- | --- |
+| 工程上限策略 | `course.utility`、培养方案、拥挤比、历史 bid | 如果学生知道自己对课的强弱偏好，算法最多能做到多好 |
+| 学生可执行策略 | 培养方案、学分、时间、容量、排队人数、自己粗略偏好 | 现实学生只凭公开数字和自我判断怎么投 |
+
+工程上限策略示意：
+
+```python
+ordered = sorted(
+    context.courses,
+    key=lambda course: (course.utility, -course.crowding_ratio),
+    reverse=True,
+)
+```
+
+学生可执行策略示意：
+
+```python
+def rough_importance(course, requirement_codes):
+    if course.course_code in requirement_codes:
+        return 1.30  # 必修或毕业压力
+    if course.credit >= 3:
+        return 1.10  # 学分较高或核心程度更高
+    return 1.00
+
+
+requirement_codes = {req.course_code for req in context.requirements}
+bids = {}
+remaining = context.budget_available
+for course in context.courses:
+    if remaining <= 0:
+        break
+    if course.crowding_ratio <= 1.0:
+        bid = 1
+    else:
+        bid = round(8 * course.crowding_ratio * rough_importance(course, requirement_codes))
+    bid = min(bid, remaining)
+    bids[course.course_id] = bid
+    remaining -= bid
+```
+
+上面只是写法示例，不是推荐最终公式。它想表达的是：**现实策略也能不用精确偏好表，只靠课程重要性粗分层和拥挤比运行。**
+
+### 5.3 最小策略模板
 
 ```powershell
 bidflow agent init my_strategy
@@ -373,7 +538,7 @@ bidflow agent info my_strategy
 
 重要限制：当前 `bidflow session run` v1 仍委托旧 runner，只支持内置 agent 直接跑 session。外部 agent 注册 API 已经存在，但完整外部 agent session 执行还不是 v1 的稳定能力。想跑正式实验，当前优先用内置 `behavioral`、`cass`、`llm`。
 
-### 5.3 写策略时最容易犯的错
+### 5.4 写策略时最容易犯的错
 
 | 错误 | 后果 | 修正 |
 | --- | --- | --- |
