@@ -13,6 +13,8 @@
 ```text
 f(m, n, α) = (1 + α) * sqrt(m - n) * exp(m / n)
 ```
+<img width="767" height="191" alt="image" src="https://github.com/user-attachments/assets/d60151dd-8bb7-4e3a-81a4-a574f08510c4" />
+
 
 符号解释：
 
