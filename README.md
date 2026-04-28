@@ -366,7 +366,7 @@ python -m bidflow --help
 
 这一步生成完整合成市场。它不是现实教务数据，而是用来复现实验的合成学生、课程、培养方案和偏好表。
 
-最简单的方式是直接输入规模：`--students` 是学生数，`--classes` 是教学班数，`--majors` 是培养方案数。不确定参数是否合理时，先加 `--dry-run` 看有效配置。
+最简单的方式是直接输入规模：`--students` 是学生数，`--classes` 是教学班数，`--majors` 是培养方案数。不填 `--majors` 时，BidFlow 会按学生规模和教学班规模分别推导，并取较大值。不确定参数是否合理时，先加 `--dry-run` 看有效配置。
 
 ```powershell
 bidflow market create research_large `

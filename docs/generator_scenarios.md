@@ -10,7 +10,7 @@ The synthetic dataset generator is now driven by YAML scenarios. The old `--pres
 bidflow market create my_market --students 200 --classes 120 --majors 5
 ```
 
-这个命令会同时生成学生表、课程表、培养方案、学生课程要求和偏好表。`--classes` 等价于教学班数量，`--majors` 等价于培养方案数量。不确定参数是否合理时，可以先加 `--dry-run`。本页后面的 YAML 场景用于更细粒度地控制课程分布和竞争结构。
+这个命令会同时生成学生表、课程表、培养方案、学生课程要求和偏好表。`--classes` 等价于教学班数量，`--majors` 等价于培养方案数量。不填 `--majors` 时，BidFlow 会按学生规模和教学班规模分别推导，再取较大的培养方案数。不确定参数是否合理时，可以先加 `--dry-run`。本页后面的 YAML 场景用于更细粒度地控制课程分布和竞争结构。
 
 ## Built-in scenarios
 

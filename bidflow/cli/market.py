@@ -214,11 +214,25 @@ def _run_create(args: argparse.Namespace) -> int:
 def _default_profiles(students: int, sections: int, preset_profiles: int) -> int:
     if students <= 0 or sections <= 0:
         return preset_profiles
-    if students <= 50 or sections <= 50:
+    return max(_student_profile_scale(students), _section_profile_scale(sections))
+
+
+def _student_profile_scale(students: int) -> int:
+    if students <= 50:
         return 3
-    if students <= 150 or sections <= 100:
+    if students <= 150:
         return 4
-    if students <= 500 or sections <= 180:
+    if students <= 500:
+        return 5
+    return 6
+
+
+def _section_profile_scale(sections: int) -> int:
+    if sections <= 50:
+        return 3
+    if sections <= 100:
+        return 4
+    if sections <= 180:
         return 5
     return 6
 
@@ -242,6 +256,8 @@ def _validate_create_shape(students: int, sections: int, profiles: int, course_c
         raise SystemExit("教学班数量必须大于 0。请使用 --classes 例如 --classes 120。")
     if not 3 <= profiles <= 6:
         raise SystemExit("培养方案数量必须在 3 到 6 之间。请使用 --majors 3 到 --majors 6。")
+    if course_codes <= 0:
+        raise SystemExit("课程代码数量必须大于 0。请使用 --codes 例如 --codes 80。")
     minimum = minimum_course_code_count(profiles)
     if course_codes > sections:
         raise SystemExit(

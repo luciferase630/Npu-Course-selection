@@ -55,7 +55,7 @@ bidflow session run --market data/synthetic/my_market --population "background=b
 ## Defaults
 
 - `--size small` 默认生成 `100` 个学生、`80` 个教学班、`4` 个培养方案。
-- 用户手动输入 `--students` 或 `--classes` 时，未显式指定的培养方案数量按规模推导到 `3-6`。
+- 用户手动输入 `--students` 或 `--classes` 时，未显式指定的培养方案数量按学生规模和教学班规模分别推导到 `3-6`，再取较大值。
 - 用户不输入课程代码数时，使用现有 `default_course_code_count(classes, profiles)` 推导。
 - 简单入口复用现有 custom generator，不改变 CSV schema。
 

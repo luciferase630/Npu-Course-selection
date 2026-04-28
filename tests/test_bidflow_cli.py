@@ -153,6 +153,111 @@ class UnitExternalAgent(BaseAgent):
             self.assertIn('"students": 12', result.stdout)
             self.assertFalse(market_dir.exists())
 
+    def test_market_create_infers_profiles_from_largest_scale_signal(self) -> None:
+        many_students = self.run_cli("market", "create", "--students", "800", "--classes", "30", "--dry-run")
+        self.assertEqual(many_students.returncode, 0, many_students.stderr)
+        self.assertIn('"profiles": 6', many_students.stdout)
+
+        many_classes = self.run_cli("market", "create", "--students", "50", "--classes", "500", "--dry-run")
+        self.assertEqual(many_classes.returncode, 0, many_classes.stderr)
+        self.assertIn('"profiles": 6', many_classes.stdout)
+
+        tiny_market = self.run_cli("market", "create", "--students", "12", "--classes", "30", "--dry-run")
+        self.assertEqual(tiny_market.returncode, 0, tiny_market.stderr)
+        self.assertIn('"profiles": 3', tiny_market.stdout)
+
+    def test_market_create_accepts_custom_course_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            market_dir = Path(tmp) / "custom_codes_market"
+            result = self.run_cli(
+                "market",
+                "create",
+                "--output",
+                str(market_dir),
+                "--students",
+                "12",
+                "--classes",
+                "30",
+                "--majors",
+                "3",
+                "--codes",
+                "20",
+                "--seed",
+                "123",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            metadata = json.loads((market_dir / "bidflow_metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["effective_parameters"]["course_codes"], 20)
+
+    def test_market_create_rejects_non_positive_course_codes(self) -> None:
+        result = self.run_cli(
+            "market",
+            "create",
+            "--students",
+            "12",
+            "--classes",
+            "30",
+            "--majors",
+            "3",
+            "--codes",
+            "0",
+            "--dry-run",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("课程代码数量必须大于 0", result.stderr + result.stdout)
+
+    def test_market_create_audit_succeeds_for_small_market(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            market_dir = Path(tmp) / "audit_market"
+            result = self.run_cli(
+                "market",
+                "create",
+                "--output",
+                str(market_dir),
+                "--students",
+                "12",
+                "--classes",
+                "30",
+                "--majors",
+                "3",
+                "--seed",
+                "123",
+                "--audit",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_market_create_seed_is_reproducible_for_generated_files(self) -> None:
+        stable_files = (
+            "profiles.csv",
+            "profile_requirements.csv",
+            "students.csv",
+            "courses.csv",
+            "student_course_code_requirements.csv",
+            "student_course_utility_edges.csv",
+            "generation_metadata.json",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "seed_a"
+            second = Path(tmp) / "seed_b"
+            for market_dir in (first, second):
+                result = self.run_cli(
+                    "market",
+                    "create",
+                    "--output",
+                    str(market_dir),
+                    "--students",
+                    "12",
+                    "--classes",
+                    "30",
+                    "--majors",
+                    "3",
+                    "--seed",
+                    "123",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+            for filename in stable_files:
+                self.assertEqual((first / filename).read_bytes(), (second / filename).read_bytes(), filename)
+
     def test_market_create_rejects_invalid_manual_shape(self) -> None:
         result = self.run_cli("market", "create", "--classes", "10", "--majors", "6", "--dry-run")
         self.assertNotEqual(result.returncode, 0)

@@ -274,7 +274,7 @@ bidflow market create my_200x120 `
   --seed 20260428
 ```
 
-这里 `--classes` 就是教学班数量，等价于旧参数 `--sections`；`--majors` 是培养方案数量，等价于 `--profiles`。如果你不填 `--majors` 和 `--codes`，BidFlow 会按规模自动推导。
+这里 `--classes` 就是教学班数量，等价于旧参数 `--sections`；`--majors` 是培养方案数量，等价于 `--profiles`。如果你不填 `--majors` 和 `--codes`，BidFlow 会按规模自动推导：学生规模和教学班规模分别估计培养方案数量，然后取更大的那个，避免“学生很多但教学班少”或“教学班很多但学生少”时把培养方案估得过低。
 
 想先看会生成什么，但不写文件：
 
